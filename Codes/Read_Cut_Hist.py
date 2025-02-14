@@ -70,7 +70,7 @@ def save_all_histogram(df, column_name, trigger_column, trigger_value, img_path,
     trigger_data = df.loc[df[trigger_column] == trigger_value, column_name].to_numpy()
     
     plt.figure(figsize=(12, 8))
-    bins_arr = np.linspace(0, 100000, bins_num)
+    bins_arr = np.linspace(0, 100000, bins_num + 1)
     plt.hist(all_data, bins=bins_arr, alpha=0.7, edgecolor='black', label='All triggerBits')
     plt.hist(trigger_data, bins=bins_arr, alpha=0.7, edgecolor='black', label=f'{trigger_column} = {trigger_value}')
     
@@ -145,7 +145,7 @@ def Cut_DeltaT_Totalcharge(df, deltaT_cut, sum_area_cut, bins_num, save_folder, 
         return None, None  # Return None if no selected events.
     
     # Δt histogram.
-    dt_bins = np.linspace(dt_min, dt_max, bins_num)
+    dt_bins = np.linspace(dt_min, dt_max, bins_num + 1)
     dt_hist, dt_bin_edges = np.histogram(selected['delta_t'], bins=dt_bins)
     dt_centers = (dt_bin_edges[:-1] + dt_bin_edges[1:]) / 2
     dt_err = np.sqrt(dt_hist)
@@ -169,7 +169,7 @@ def Cut_DeltaT_Totalcharge(df, deltaT_cut, sum_area_cut, bins_num, save_folder, 
     plt.close()
     
     # sum_area histogram.
-    s_bins = np.linspace(s_min, s_max, bins_num)
+    s_bins = np.linspace(s_min, s_max, bins_num + 1)
     s_hist, s_bin_edges = np.histogram(selected['sum_area'], bins=s_bins)
     s_centers = (s_bin_edges[:-1] + s_bin_edges[1:]) / 2
     s_err = np.sqrt(s_hist)
@@ -215,15 +215,15 @@ def main():
     end_run = int(sys.argv[2])
     
     # Set common cut values.
-    deltaT_cut = (7500, 20000)    # in ns
-    sum_area_cut = (1000, 50000)   # ADC units
-    bins_num_cut = 50             # for cut histograms
+    deltaT_cut = (0, 20000)    # in ns
+    sum_area_cut = (0, 100000)   # ADC units
+    bins_num_cut = 100             # for cut histograms
     # Log scale switch for all functions.
     logscale = True
     
     # Folders for individual results.
-    bithist_folder = '/raid1/genli/Data_D2O/Bit_hist'
-    
+    newcut_folder = '/raid1/genli/Data_D2O/'+f"run{start_run}_{end_run}_dt{deltaT_cut[0]}-{deltaT_cut[1]}_sa{sum_area_cut[0]}-{sum_area_cut[1]}"+'/'
+    os.makedirs(newcut_folder, exist_ok=True) 
     # Lists to collect aggregated raw data.
     aggregated_trigger_bits = []
     aggregated_energy_all = []
@@ -262,19 +262,21 @@ def main():
         output_path = f"/raid1/genli/Data_D2O/run{run}_data_new.pkl"
         df_new.to_pickle(output_path)
         print(f"Run {run}: DataFrame saved to: {output_path}")
-        
+        # Folder for histograms for this run.
+        general_hist_folder = newcut_folder + f"run{run}_gneral/"
+        os.makedirs(general_hist_folder, exist_ok=True)
         # Save trigger bits histogram.
-        trig_img = os.path.join(bithist_folder, f"run{run}_trigger_bits_histogram.png")
-        trig_pkl = os.path.join(bithist_folder, f"run{run}_trigger_bits_histogram.pkl")
+        trig_img = os.path.join(general_hist_folder, f"run{run}_trigger_bits_histogram.png")
+        trig_pkl = os.path.join(general_hist_folder, f"run{run}_trigger_bits_histogram.pkl")
         save_trigger_bits_histogram(df_new, trig_img, trig_pkl, logscale=logscale)
         
         # Save energy (total charge) histogram comparing all vs. trigger==2.
-        energy_img = os.path.join(bithist_folder, f"run{run}_sum_area_histogram.jpg")
-        energy_pkl = os.path.join(bithist_folder, f"run{run}_sum_area_histogram.pkl")
-        save_all_histogram(df_new, "sum_area", "triggerBits", 2, energy_img, energy_pkl, bins_num=100, logscale=logscale)
+        energy_img = os.path.join(general_hist_folder, f"run{run}_sum_area_histogram.jpg")
+        energy_pkl = os.path.join(general_hist_folder, f"run{run}_sum_area_histogram.pkl")
+        save_all_histogram(df_new, "sum_area", "triggerBits", 2, energy_img, energy_pkl, bins_num=bins_num_cut, logscale=logscale)
         
         # Folder for cut histograms for this run.
-        run_hist_folder = f"/raid1/genli/Data_D2O/histograms/run{run}"
+        run_hist_folder = newcut_folder + f"run{run}_cuthist/"
         os.makedirs(run_hist_folder, exist_ok=True)
         cut_deltaT, cut_totalcharge = Cut_DeltaT_Totalcharge(df_new, deltaT_cut, sum_area_cut, bins_num_cut, run_hist_folder, run, logscale=logscale)
         
@@ -287,7 +289,7 @@ def main():
             aggregated_cut_sum_area.append(cut_totalcharge)
     
     # --- Aggregated Histograms ---
-    total_folder = f"/raid1/genli/Data_D2O/Total_run_{start_run}_{end_run}"
+    total_folder = newcut_folder + "Total/"
     os.makedirs(total_folder, exist_ok=True)
     
     # Aggregated Trigger Bits Histogram.
