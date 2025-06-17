@@ -1,439 +1,375 @@
-#!/usr/bin/env python
-# %%
-import ROOT
+#!/usr/bin/env python3
+"""
+Refactored script for processing ROOT files and saving histograms with detailed comments.
+Generates general and cut histograms for triggerBits, sum_area, multiplicity,
+and computes Δt and sum_area histograms after veto-based selections.
+"""
+import sys
+from pathlib import Path
+import pickle
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import uproot
 import awkward as ak
-import pandas as pd
-from scipy.optimize import curve_fit
-import sys
-import pickle
-import os
 
-# %%
+
+def ensure_dir(path: Path):
+    """
+    Ensure that the given directory exists. Create it (and parents) if necessary.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def save_pickle(data: dict, path: Path):
+    """
+    Save a Python dictionary to a pickle file at the specified path.
+
+    Parameters:
+        data (dict): The data to serialize.
+        path (Path): Path where pickle file will be written.
+    """
+    with path.open('wb') as f:
+        pickle.dump(data, f)
+
+
+def plot_histogram(
+    arrays,
+    labels,
+    bins,
+    img_path,
+    title,
+    xlabel,
+    logscale=True,
+    figsize=(10, 6)
+):
+    """
+    Plot one or more histograms on the same axes and save the figure.
+
+    Parameters:
+        arrays (list of np.ndarray): Data arrays to histogram.
+        labels (list of str): Legends for each histogram.
+        bins (array-like): Bin edges.
+        img_path (Path): Output image path.
+        title (str): Plot title.
+        xlabel (str): X-axis label.
+        logscale (bool): If True, set y-axis to log scale.
+        figsize (tuple): Figure size in inches.
+
+    Returns:
+        list of tuples: Each tuple is (counts, edges) returned by np.histogram.
+    """
+    plt.figure(figsize=figsize)
+    outputs = []
+    # Loop over each dataset and label
+    for data, label in zip(arrays, labels):
+        # Plot histogram and capture counts + bin edges
+        counts, edges, _ = plt.hist(
+            data,
+            bins=bins,
+            alpha=0.7,
+            edgecolor='black',
+            label=label
+        )
+        outputs.append((counts, edges))
+
+    # Labeling and styling
+    plt.xlabel(xlabel)
+    plt.ylabel('Events')
+    plt.title(title)
+
+    # Optionally use log scale on y-axis
+    if logscale:
+        plt.yscale('log')
+
+    plt.legend()
+    plt.minorticks_on()
+    # Grid for major/minor ticks
+    plt.grid(which='major', axis='y', linestyle='-', linewidth=0.75, color='gray')
+    plt.grid(which='minor', axis='y', linestyle=':', linewidth=0.5, color='gray')
+    plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
+    plt.tight_layout()
+
+    # Save and close
+    plt.savefig(img_path)
+    plt.close()
+    return outputs
+
+
 def save_trigger_bits_histogram(df, img_path, pkl_path, logscale=True):
     """
-    Generates and saves a histogram of triggerBits.
-    The y-axis will be in log scale if logscale=True.
-    Saves the histogram figure as a PNG and the histogram data (counts and bins) as a pickle file.
-    
-    Parameters:
-        df (DataFrame): Input DataFrame.
-        img_path (str): File path to save the histogram image.
-        pkl_path (str): File path to save the histogram data as a pickle file.
-        logscale (bool): Whether to use log scale on the y-axis.
-    """
-    trigger_bits = df['triggerBits'].to_numpy()
-    bins_array = np.linspace(0, 35, 36)
-    
-    plt.figure(figsize=(8, 5))
-    hist, bins, _ = plt.hist(trigger_bits, bins=bins_array, edgecolor='black', alpha=0.7)
-    plt.xlabel("Trigger Bits")
-    plt.ylabel("Events")
-    if logscale:
-        plt.yscale("log")
-    plt.title("Histogram of Trigger Bits")
-    plt.minorticks_on()
-    plt.grid(which='major', axis='y', linestyle='-', linewidth=0.75, color='gray')
-    plt.grid(which='minor', axis='y', linestyle=':', linewidth=0.5, color='gray')
-    plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
-    plt.savefig(img_path)
-    plt.show()
-    
-    hist_data = {"hist": hist, "bins": bins}
-    with open(pkl_path, "wb") as f:
-        pickle.dump(hist_data, f)
-    
-    print(f"Trigger Bit Histogram image saved to: {img_path}")
-    print(f"Trigger Bit Histogram data saved to: {pkl_path}")
+    Generate and save a histogram of the 'triggerBits' column.
 
-# %%
-def save_all_histogram(df, column_name, trigger_column, trigger_value, img_path, pkl_path, bins_num, bins_start, bins_end, logscale=True):
-    """
-    Generates and saves histograms of the specified column, comparing all data vs. a subset 
-    where the trigger condition is met. Saves the histogram figure as a JPEG and the histogram 
-    data (raw arrays and binning) as a pickle file.
-    
     Parameters:
-        df (DataFrame): Input DataFrame.
-        column_name (str): The column name to create the histograms for.
-        trigger_column (str): The column used to filter data based on a trigger value.
-        trigger_value (int): The trigger value to filter by.
-        img_path (str): File path to save the histogram image.
-        pkl_path (str): File path to save the histogram data as a pickle file.
-        bins_num (int): Number of bins to use.
-        logscale (bool): Whether to use log scale on the y-axis.
+        df (pd.DataFrame): DataFrame containing 'triggerBits'.
+        img_path (Path): Where to save the PNG figure.
+        pkl_path (Path): Where to save the histogram data as pickle.
+        logscale (bool): If True, use log scale on y-axis.
     """
-    all_data = df[column_name].to_numpy()
-    trigger_data = df.loc[df[trigger_column] == trigger_value, column_name].to_numpy()
-    
-    plt.figure(figsize=(12, 8))
-    bins_arr = np.linspace(bins_start, bins_end, bins_num)
-    plt.hist(all_data, bins=bins_arr, alpha=0.7, edgecolor='black', label='All triggerBits')
-    plt.hist(trigger_data, bins=bins_arr, alpha=0.7, edgecolor='black', label=f'{trigger_column} = {trigger_value}')
-    
-    plt.xlabel(column_name, fontsize=25)  
-    plt.ylabel("Events", fontsize=25)
-    plt.xticks(fontsize=20)
-    plt.yticks(fontsize=20)
-    plt.title(f"Histogram of {column_name}", fontsize=25)  
-    if logscale:
-        plt.yscale("log")
-    plt.legend(fontsize=20)
-    plt.minorticks_on()
-    plt.grid(which='major', axis='y', linestyle='-', linewidth=0.75, color='gray')
-    plt.grid(which='minor', axis='y', linestyle=':', linewidth=0.5, color='gray')
-    plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
-    plt.xlim(bins_start, bins_end)  
-    plt.tight_layout()
-    plt.minorticks_on()
-    plt.grid(which='both')
-    plt.savefig(img_path)
-    plt.show()
-    
-    hist_data = {"all_data": all_data, "trigger_data": trigger_data, "bins": bins_arr}
-    with open(pkl_path, "wb") as f:
-        pickle.dump(hist_data, f)
-    
-    print(f"Histogram image saved to: {img_path}")
-    print(f"Histogram data saved to: {pkl_path}")
+    # Extract numpy array
+    data = df['triggerBits'].to_numpy()
+    # Define integer bins from 0 to 35
+    bins = np.arange(0, 36)
+    # Plot and retrieve counts + edges
+    counts, edges = plot_histogram(
+        [data],
+        ['triggerBits'],
+        bins,
+        img_path,
+        'Histogram of Trigger Bits',
+        'Trigger Bits',
+        logscale=logscale
+    )[0]
 
-# %%
-def Cut_DeltaT_Totalcharge(df, deltaT_cut, sum_area_cut, bins_num, save_folder, run_number, multiplicity_cut=6, logscale=True):
+    # Save histogram data
+    save_pickle({'hist': counts, 'bins': edges}, pkl_path)
+    print(f"Saved trigger bits histogram to {img_path} and data to {pkl_path}")
+
+
+def save_comparison_histogram(
+    df,
+    column,
+    trigger_val,
+    img_path,
+    pkl_path,
+    bins,
+    logscale=True
+):
     """
-    For after-veto events (triggerBits==2), compute Δt from the previous muon event (triggerBits>=32), 
-    apply a Δt cut and a total charge (sum_area) cut, and then produce two histograms (Δt and sum_area).
-    The y-axis is set to log scale if logscale=True.
-    The legend indicates the run number and the applied cut values.
-    
-    The function saves the plots and the histogram data (counts, bin centers, error bars) as pickle files.
-    
+    Generate and save comparison histograms for all entries vs. those with a specific triggerBits value.
+
     Parameters:
-        df (pd.DataFrame): The input DataFrame with columns 'triggerBits', 'nsTime', and 'sum_area'.
-        deltaT_cut (tuple): (dt_min, dt_max) in ns.
-        sum_area_cut (tuple): (s_min, s_max) in ADC units.
-        bins_num (int): Number of bins to use.
-        save_folder (str): Folder to save the output.
-        run_number (int): Run number (for labeling the plots).
-        logscale (bool): Whether to use log scale on the y-axis.
+        df (pd.DataFrame): Input DataFrame.
+        column (str): Column to histogram (e.g. 'sum_area', 'multiplicity').
+        trigger_val (int): Value of triggerBits to subset for comparison.
+        img_path (Path): Output image path.
+        pkl_path (Path): Output pickle path for histogram data.
+        bins (array-like): Bin edges.
+        logscale (bool): Use log scale on y-axis.
     """
-    os.makedirs(save_folder, exist_ok=True)
-    
-    # Identify muon and after-veto events and compute Δt.
-    muon_mask = df['triggerBits'] >= 32
-    after_veto_mask = (df['triggerBits'] == 2) & (df['multiplicity'] > multiplicity_cut)
-    muon_times = df.loc[muon_mask, 'nsTime'].values
-    after_veto_df = df.loc[after_veto_mask].copy()
-    event_times = after_veto_df['nsTime'].values
-    insertion_indices = np.searchsorted(muon_times, event_times, side='right')
-    delta_t = np.full_like(event_times, np.nan, dtype=float)
-    valid = insertion_indices > 0
-    delta_t[valid] = event_times[valid] - muon_times[insertion_indices[valid] - 1]
-    after_veto_df['delta_t'] = delta_t
-    
-    print(f"Run {run_number}: Number of after-veto events before cuts: {len(after_veto_df)}")
-    
-    dt_min, dt_max = deltaT_cut
-    s_min, s_max = sum_area_cut
-    print(f"Run {run_number}: deltaT_cut = {deltaT_cut}, sum_area_cut = {sum_area_cut}")
-    
-    selected = after_veto_df[
-        (after_veto_df['delta_t'] >= dt_min) &
-        (after_veto_df['delta_t'] <= dt_max)
-    ]
-    print(f"Run {run_number}: Number of events after deltaT cut: {len(selected)}")
-    
-    selected = selected[
-        (selected['sum_area'] >= s_min) &
-        (selected['sum_area'] <= s_max)
-    ]
-    print(f"Run {run_number}: Number of events after sum_area cut: {len(selected)}")
-    
-    if selected.empty:
-        print(f"Run {run_number}: No events passed the selection cuts.")
-        return None, None  # Return None if no selected events.
-    
-    # Δt histogram.
+    all_data  = df[column].to_numpy()
+    trig_data = df.loc[df['triggerBits'] == trigger_val, column].to_numpy()
+
+    outputs = plot_histogram(
+        [all_data, trig_data],
+        ['All', f'triggerBits == {trigger_val}'],
+        bins,
+        img_path,
+        f'Histogram of {column}',
+        column,
+        logscale=logscale,
+        figsize=(12, 8)
+    )
+
+    # Save raw histogram data
+    save_pickle(
+        {
+            'all_data': outputs[0][0],
+            'trigger_data': outputs[1][0],
+            'bins': outputs[0][1]
+        },
+        pkl_path
+    )
+    print(f"Saved comparison histogram for {column} to {img_path} and data to {pkl_path}")
+
+
+def cut_and_save_histograms(
+    df,
+    delta_t_cut,
+    area_cut,
+    bins_num,
+    save_dir,
+    run_number,
+    multiplicity_adc,
+    multiplicity_cut,
+    logscale=True
+):
+    """
+    Apply sequential cuts on Δt and total charge, then save errorbar plots and raw data.
+    Always produce output files (even if counts are zero).
+
+    Parameters:
+        df (pd.DataFrame): Data including 'nsTime', 'triggerBits', 'sum_area', 'multiplicity'.
+        delta_t_cut (tuple): (min, max) ns range for Δt.
+        area_cut (tuple): (min, max) ADC range for sum_area.
+        bins_num (int): Number of bins for histograms.
+        save_dir (Path): Directory where outputs are written.
+        run_number (int): Identifier for labeling.
+        multiplicity_adc (int): ADC threshold for counting channels.
+        multiplicity_cut (int): Minimum number of channels to qualify as veto event.
+        logscale (bool): Use log scale on y-axis.
+
+    Returns:
+        (delta_t_values, sum_area_values)
+    """
+    ensure_dir(save_dir)
+
+    # Identify muon times for reference
+    muon_times = df.loc[df['triggerBits'] >= 32, 'nsTime'].values
+    # Select events immediately after veto (triggerBits==2, multiplicity>cut)
+    after_veto = df[(df['triggerBits'] == 2) & (df['multiplicity'] > multiplicity_cut)].copy()
+    print(f"Run {run_number}: after-veto events: {len(after_veto)}")
+
+    # Compute Δt relative to most recent muon
+    times = after_veto['nsTime'].values
+    idx = np.searchsorted(muon_times, times, side='right')
+    delta_t = np.full_like(times, np.nan, dtype=float)
+    valid   = idx > 0
+    delta_t[valid] = times[valid] - muon_times[idx[valid] - 1]
+    after_veto['delta_t'] = delta_t
+
+    # Apply Δt cut
+    dt_min, dt_max = delta_t_cut
+    sel_dt = after_veto[(after_veto['delta_t'] >= dt_min) & (after_veto['delta_t'] <= dt_max)]
+    print(f"Run {run_number}: after Δt cut: {len(sel_dt)}")
+
+    # Apply sum_area cut
+    s_min, s_max = area_cut
+    sel = sel_dt[(sel_dt['sum_area'] >= s_min) & (sel_dt['sum_area'] <= s_max)]
+    print(f"Run {run_number}: after sum_area cut: {len(sel)}")
+
+    # Define bins for histograms
     dt_bins = np.linspace(dt_min, dt_max, bins_num + 1)
-    dt_hist, dt_bin_edges = np.histogram(selected['delta_t'], bins=dt_bins)
-    dt_centers = (dt_bin_edges[:-1] + dt_bin_edges[1:]) / 2
-    dt_err = np.sqrt(dt_hist)
-    
-    dt_data = {"hist": dt_hist, "bin_centers": dt_centers, "errorbars": dt_err}
-    dt_pkl_path = os.path.join(save_folder, 'delta_t_histogram.pkl')
-    with open(dt_pkl_path, 'wb') as f:
-        pickle.dump(dt_data, f)
-    
-    plt.figure(figsize=(10, 7))
-    plt.errorbar(dt_centers, dt_hist, yerr=dt_err, fmt='o', label=f"Run {run_number}: Δt cut {dt_min}-{dt_max} ns, sum_area cut {s_min}-{s_max} ADC")
-    plt.xlabel("Δt (ns)", fontsize=14)
-    plt.ylabel("Counts", fontsize=14)
-    plt.title("Δt Histogram (Selected Events)", fontsize=16)
-    if logscale:
-        plt.yscale("log")
-    plt.legend(fontsize=12)
-    plt.minorticks_on()
-    plt.grid(which='both')
-    plt.tight_layout()
-    dt_plot_path = os.path.join(save_folder, 'delta_t_histogram.png')
-    plt.savefig(dt_plot_path)
-    plt.close()
-    
-    # sum_area histogram.
-    s_bins = np.linspace(s_min, s_max, bins_num + 1)
-    s_hist, s_bin_edges = np.histogram(selected['sum_area'], bins=s_bins)
-    s_centers = (s_bin_edges[:-1] + s_bin_edges[1:]) / 2
-    s_err = np.sqrt(s_hist)
-    
-    s_data = {"hist": s_hist, "bin_centers": s_centers, "errorbars": s_err}
-    s_pkl_path = os.path.join(save_folder, 'sum_area_histogram.pkl')
-    with open(s_pkl_path, 'wb') as f:
-        pickle.dump(s_data, f)
-    
-    plt.figure(figsize=(10, 7))
-    plt.errorbar(s_centers, s_hist, yerr=s_err, fmt='o', label=f"Run {run_number}: delta_t cut {dt_min}-{dt_max} ns, sum_area cut {s_min}-{s_max} ADC")
-    plt.xlabel("Total Charge (ADC)", fontsize=14)
-    plt.ylabel("Counts", fontsize=14)
-    plt.title("Total Charge Histogram (Selected Events)", fontsize=16)
-    if logscale:
-        plt.yscale("log")
-    plt.legend(fontsize=12)
-    plt.minorticks_on()
-    plt.grid(which='both')
-    plt.tight_layout()
-    s_plot_path = os.path.join(save_folder, 'sum_area_histogram.png')
-    plt.savefig(s_plot_path)
-    plt.close()
-    
-    print(f"Run {run_number}: Δt and Total Charge histograms (with cuts) saved in: {save_folder}")
-    
-    # Return the selected raw arrays for aggregated plotting.
-    return selected['delta_t'].values, selected['sum_area'].values
+    s_bins  = np.linspace(s_min,  s_max,  bins_num + 1)
 
-# %%
+    # Δt histogram (errorbar style)
+    dt_hist, dt_edges = np.histogram(sel['delta_t'], bins=dt_bins)
+    dt_centers        = (dt_edges[:-1] + dt_edges[1:]) / 2
+    dt_err            = np.sqrt(dt_hist)
+    save_pickle({'hist': dt_hist, 'bin_centers': dt_centers, 'errorbars': dt_err}, save_dir/'delta_t_histogram.pkl')
+    plt.errorbar(dt_centers, dt_hist, yerr=dt_err, fmt='o',
+                 label=f"Run {run_number}: Δt {dt_min}-{dt_max}, area {s_min}-{s_max}")
+    plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title('Δt Histogram')
+    if logscale: plt.yscale('log')
+    plt.legend(); plt.minorticks_on(); plt.grid(which='both'); plt.tight_layout()
+    plt.savefig(save_dir/'delta_t_histogram.png'); plt.close()
+
+    # sum_area histogram (errorbar style)
+    s_hist, s_edges = np.histogram(sel['sum_area'], bins=s_bins)
+    s_centers       = (s_edges[:-1] + s_edges[1:]) / 2
+    s_err           = np.sqrt(s_hist)
+    save_pickle({'hist': s_hist, 'bin_centers': s_centers, 'errorbars': s_err}, save_dir/'sum_area_histogram.pkl')
+    plt.errorbar(s_centers, s_hist, yerr=s_err, fmt='o',
+                 label=f"Run {run_number}: Δt {dt_min}-{dt_max}, area {s_min}-{s_max}")
+    plt.xlabel('Total Charge (ADC)'); plt.ylabel('Counts'); plt.title('Total Charge Histogram')
+    if logscale: plt.yscale('log')
+    plt.legend(); plt.minorticks_on(); plt.grid(which='both'); plt.tight_layout()
+    plt.savefig(save_dir/'sum_area_histogram.png'); plt.close()
+
+    # Return raw arrays for aggregation
+    return sel['delta_t'].values, sel['sum_area'].values
+
+
+def process_run(
+    run,
+    data_dir,
+    output_dir,
+    delta_t_cut,
+    area_cut,
+    bins_cut,
+    multiplicity_adc,
+    multiplicity_cut
+):
+    """
+    Process a single run: read ROOT tree, build DataFrame, save general and cut histograms.
+
+    Parameters:
+        run (int): Run number to process.
+        data_dir (Path): Base directory for ROOT files.
+        output_dir (Path): Where to write outputs.
+        delta_t_cut, area_cut: Tuples defining cut ranges.
+        bins_cut (int): Number of bins for cut histograms.
+        multiplicity_adc (int): ADC threshold for multiplicity.
+        multiplicity_cut (int): Minimum channel count for veto events.
+
+    Returns:
+        tuple of arrays or None: Δt and sum_area arrays for aggregated plotting.
+    """
+    print(f"Processing run {run}")
+    root_path = data_dir/f"run{run}_processed_v5.root"
+    if not root_path.exists():
+        print(f"File not found: {root_path}")
+        return None
+
+    # Read in chunks to manage memory
+    dfs = []
+    for chunk in uproot.open(root_path)['tree'].iterate(
+        ['eventID', 'nsTime', 'triggerBits', 'area'],
+        library='ak', step_size='100 MB'
+    ):
+        arr = ak.to_numpy(chunk['area'])
+        # Build DataFrame for this chunk
+        df_chunk = pd.DataFrame({
+            'eventID'    : ak.to_numpy(chunk['eventID']),
+            'nsTime'     : ak.to_numpy(chunk['nsTime']),
+            'triggerBits': ak.to_numpy(chunk['triggerBits']),
+            'sum_area'   : np.sum(arr[:, :12], axis=1),
+            'multiplicity': np.sum(arr[:, :12] > multiplicity_adc, axis=1)
+        })
+        dfs.append(df_chunk)
+
+    # Concatenate all chunks
+    if not dfs:
+        print(f"No data for run {run}")
+        return None
+    df = pd.concat(dfs, ignore_index=True)
+    # Save raw DataFrame
+    df.to_pickle(output_dir/f"run{run}_data.pkl")
+
+    # Prepare subdirectories
+    hist_dir = output_dir/f"run{run}"/'histograms'
+    cut_dir  = output_dir/f"run{run}"/'cuthist'
+    ensure_dir(hist_dir)
+    ensure_dir(cut_dir)
+
+    # General histograms
+    save_trigger_bits_histogram(df, hist_dir/f"run{run}_triggerBits.png", hist_dir/f"run{run}_triggerBits.pkl")
+    save_comparison_histogram(df, 'sum_area', 2, hist_dir/f"run{run}_sum_area.png", hist_dir/f"run{run}_sum_area.pkl", np.linspace(0, 100000, bins_cut+1))
+    save_comparison_histogram(df, 'multiplicity', 2, hist_dir/f"run{run}_multiplicity.png", hist_dir/f"run{run}_multiplicity.pkl", np.arange(0, 13))
+
+    # Cut histograms
+    return cut_and_save_histograms(
+        df, delta_t_cut, area_cut, bins_cut, cut_dir,
+        run, multiplicity_adc, multiplicity_cut
+    )
+
+
 def main():
     """
-    Expects two command-line arguments: start_run and end_run.
-    For each run between these two numbers (inclusive), the script processes the ROOT file, 
-    generates and saves individual histograms, and collects raw data for aggregated histograms.
-    Finally, it creates a "Total_run_<start_run>_<end_run>" folder containing aggregated plots 
-    and histogram data.
-    
-    A logscale switch (default True) is used throughout.
+    Entry point: parse arguments and loop over runs.
     """
-    if len(sys.argv) < 3:
+    if len(sys.argv) != 3:
         print("Usage: python script.py <start_run> <end_run>")
         sys.exit(1)
-    start_run = int(sys.argv[1])
-    end_run = int(sys.argv[2])
-    
-    # Set common cut values.
-    deltaT_cut = (0, 20000)    # in ns
-    sum_area_cut = (0, 100000)   # ADC units
-    bins_num_cut = 20             # for cut histograms
-    multiplicity_cut = 0
-    multiplicity_ADC = 30_00
-    # Log scale switch for all functions.
-    logscale = True
-    
-    # Folders for individual results.
-    newcut_folder = '/raid1/genli/Data_D2O/'+f"run{start_run}_{end_run}_dt{deltaT_cut[0]}-{deltaT_cut[1]}_sa{sum_area_cut[0]}-{sum_area_cut[1]}_mcut{multiplicity_cut}/"
-    os.makedirs(newcut_folder, exist_ok=True) 
-    # Lists to collect aggregated raw data.
-    aggregated_trigger_bits = []
-    aggregated_energy_all = []
-    aggregated_energy_trigger = []
-    aggregated_cut_deltaT = []
-    aggregated_cut_sum_area = []
-    aggregated_multiplicity_all = []
-    aggregated_multiplicity_trigger = []
 
-    # Process each run.
-    for run in range(start_run, end_run+1):
-        print(f"\nProcessing run: {run}")
-        file_path = f"/raid1/genli/Data_D2O/run{run}_processed_v5.root"
-        branches_to_read = ["eventID", "nsTime", "triggerBits", "pulseH", "area"]
-        data_list = []
-        
-        try:
-            with uproot.open(file_path) as file:
-                tree = file["tree"]
-                for chunk in tree.iterate(branches_to_read, library="ak", step_size="100 MB"):
-                    scalar_data = {key: ak.to_numpy(chunk[key]) for key in ["eventID", "nsTime", "triggerBits"]}
-                    array_data = {key: list(ak.to_numpy(chunk[key])) for key in ["pulseH", "area"]}
-                    area_arrays = ak.to_numpy(chunk["area"])
-                    scalar_data['sum_area'] = np.sum(area_arrays[:, 0:12], axis=1)
-                    #add one more channel  to scalar_data, multiplicity, which count the number of channels with area > multiplicity_ADC
-                    scalar_data['multiplicity'] = np.sum(area_arrays[:, 0:12] > multiplicity_ADC, axis=1)
-                    # Combine scalar and array data into a single DataFrame.
-                    combined_data = {**scalar_data, **array_data}
-                    data_list.append(pd.DataFrame(combined_data))
-        except Exception as e:
-            print(f"Error processing run {run}: {e}")
-            continue
-        
-        if not data_list:
-            print(f"Run {run}: No data found.")
-            continue
-        df_new = pd.concat(data_list, ignore_index=True)
-        print(f"Run {run}: Finished processing ROOT file into DataFrame.")
-        
-        # Save DataFrame.
-        output_path = f"/raid1/genli/Data_D2O/run{run}_data_new.pkl"
-        df_new.to_pickle(output_path)
-        print(f"Run {run}: DataFrame saved to: {output_path}")
-        # Folder for histograms for this run.
-        general_hist_folder = newcut_folder + f"run{run}_gneral/"
-        os.makedirs(general_hist_folder, exist_ok=True)
-        # Save trigger bits histogram.
-        trig_img = os.path.join(general_hist_folder, f"run{run}_trigger_bits_histogram.png")
-        trig_pkl = os.path.join(general_hist_folder, f"run{run}_trigger_bits_histogram.pkl")
-        save_trigger_bits_histogram(df_new, trig_img, trig_pkl, logscale=logscale)
-        
-        # Save energy (total charge) histogram comparing all vs. trigger==2.
-        energy_img = os.path.join(general_hist_folder, f"run{run}_sum_area_histogram.jpg")
-        energy_pkl = os.path.join(general_hist_folder, f"run{run}_sum_area_histogram.pkl")
-        save_all_histogram(df_new, "sum_area", "triggerBits", 2, energy_img, energy_pkl, bins_num=bins_num_cut, bins_start=0, bins_end=100000, logscale=logscale)
-        
-        # Save multiplicity histogram.
-        multiplicity_img = os.path.join(general_hist_folder, f"run{run}_multiplicity_histogram.jpg")
-        multiplicity_pkl = os.path.join(general_hist_folder, f"run{run}_multiplicity_histogram.pkl")
-        save_all_histogram(df_new, "multiplicity", "triggerBits", 2, multiplicity_img, multiplicity_pkl, bins_num=13, bins_start=0, bins_end=12, logscale=logscale)
+    start_run, end_run = map(int, sys.argv[1:])
+    data_dir  = Path('/raid1/genli/Data_D2O')
+    output_dir = data_dir/f"runs_{start_run}_{end_run}"
+    ensure_dir(output_dir)
 
-        # Folder for cut histograms for this run.
-        run_hist_folder = newcut_folder + f"run{run}_cuthist/"
-        os.makedirs(run_hist_folder, exist_ok=True)
-        cut_deltaT, cut_totalcharge = Cut_DeltaT_Totalcharge(df_new, deltaT_cut, sum_area_cut, bins_num_cut, run_hist_folder, run, multiplicity_cut, logscale=logscale)
-        
-        # Collect raw data for aggregated histograms.
-        aggregated_trigger_bits.append(df_new['triggerBits'].to_numpy())
-        aggregated_energy_all.append(df_new['sum_area'].to_numpy())
-        aggregated_energy_trigger.append(df_new.loc[df_new['triggerBits'] == 2, 'sum_area'].to_numpy())
-        aggregated_multiplicity_all.append(df_new['multiplicity'].to_numpy())
-        aggregated_multiplicity_trigger.append(df_new.loc[df_new['triggerBits'] == 2, 'multiplicity'].to_numpy())
+    # Configuration parameters
+    delta_t_cut      = (0, 20000)    # Δt range in ns
+    area_cut         = (0, 100000)   # sum_area ADC range
+    bins_cut         = 20            # Number of bins for cut histograms
+    multiplicity_adc = 3000          # ADC threshold for channel count
+    multiplicity_cut = 0             # Minimum channel count for veto events
 
-        if cut_deltaT is not None and cut_totalcharge is not None:
-            aggregated_cut_deltaT.append(cut_deltaT)
-            aggregated_cut_sum_area.append(cut_totalcharge)
-    
-    # --- Aggregated Histograms ---
-    total_folder = newcut_folder + "Total/"
-    os.makedirs(total_folder, exist_ok=True)
-    
-    # Aggregated Trigger Bits Histogram.
-    all_trig = np.concatenate(aggregated_trigger_bits) if aggregated_trigger_bits else np.array([])
-    trig_bins = np.linspace(0, 35, 36)
-    hist_trig, _ = np.histogram(all_trig, bins=trig_bins)
-    trig_err = np.sqrt(hist_trig)
-    plt.figure(figsize=(8, 5))
-    plt.errorbar((trig_bins[:-1]+trig_bins[1:])/2, hist_trig, yerr=trig_err, fmt='o', label=f"Runs {start_run}-{end_run}")
-    plt.xlabel("Trigger Bits")
-    plt.ylabel("Events")
-    if logscale:
-        plt.yscale("log")
-    plt.title("Aggregated Histogram of Trigger Bits")
-    plt.legend()
-    plt.tight_layout()
-    trig_total_img = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_trigger_bits_histogram.png")
-    plt.savefig(trig_total_img)
-    plt.close()
-    trig_total_pkl = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_trigger_bits_histogram.pkl")
-    with open(trig_total_pkl, "wb") as f:
-        pickle.dump({"hist": hist_trig, "bins": trig_bins}, f)
-    
-    # Aggregated Energy Histogram.
-    all_energy = np.concatenate(aggregated_energy_all) if aggregated_energy_all else np.array([])
-    trig_energy = np.concatenate(aggregated_energy_trigger) if aggregated_energy_trigger else np.array([])
-    energy_bins = np.linspace(0, 100000, 101)
-    plt.figure(figsize=(12, 8))
-    plt.hist(all_energy, bins=energy_bins, alpha=0.7, edgecolor='black', label='All triggerBits')
-    plt.hist(trig_energy, bins=energy_bins, alpha=0.7, edgecolor='black', label="triggerBits == 2")
-    plt.xlabel("Total Charge (ADC)", fontsize=25)
-    plt.ylabel("Events", fontsize=25)
-    plt.title("Aggregated Histogram of Total Charge (ADC)", fontsize=25)
-    if logscale:
-        plt.yscale("log")
-    plt.legend(fontsize=20)
-    plt.tight_layout()
-    energy_total_img = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_sum_area_histogram.jpg")
-    plt.savefig(energy_total_img)
-    plt.close()
-    energy_total_pkl = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_sum_area_histogram.pkl")
-    with open(energy_total_pkl, "wb") as f:
-        pickle.dump({"all_data": all_energy, "trigger_data": trig_energy, "bins": energy_bins}, f)
-    
-    # Aggregated multiplicity Histogram.
-    all_multiplicity = np.concatenate(aggregated_multiplicity_all) if aggregated_multiplicity_all else np.array([])
-    trig_multiplicity = np.concatenate(aggregated_multiplicity_trigger) if aggregated_multiplicity_trigger else np.array([])
-    multiplicity_bins = np.linspace(0, 13, 14)
-    plt.figure(figsize=(12, 8))
-    # plt.hist(all_multiplicity, bins=multiplicity_bins, alpha=0.7, edgecolor='black', label='All triggerBits')
-    plt.hist(trig_multiplicity, bins=multiplicity_bins, alpha=0.7, edgecolor='black', label="triggerBits == 2")
-    plt.xlabel("Multiplicity", fontsize=25)
-    plt.ylabel("Events", fontsize=25)
-    plt.xticks(fontsize=20)
-    plt.yticks(fontsize=20)
-    plt.title("Aggregated Histogram of Multiplicity", fontsize=25)
-    if logscale:
-        plt.yscale("log")
-    plt.legend(fontsize=20)
-    plt.tight_layout()
-    multiplicity_total_img = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_multiplicity_histogram.jpg")
-    plt.savefig(multiplicity_total_img)
-    plt.close()
-    multiplicity_total_pkl = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_multiplicity_histogram.pkl")
-    with open(multiplicity_total_pkl, "wb") as f:
-        pickle.dump({"all_data": all_multiplicity, "trigger_data": trig_multiplicity, "bins": multiplicity_bins}, f)
-    
-    # Aggregated Cut Δt Histogram.
-    if aggregated_cut_deltaT:
-        all_deltaT = np.concatenate(aggregated_cut_deltaT)
-        dt_bins_total = np.linspace(deltaT_cut[0], deltaT_cut[1], bins_num_cut+1)
-        hist_dt, _ = np.histogram(all_deltaT, bins=dt_bins_total)
-        dt_centers = (dt_bins_total[:-1] + dt_bins_total[1:]) / 2
-        dt_err = np.sqrt(hist_dt)
-        plt.figure(figsize=(10, 7))
-        plt.errorbar(dt_centers, hist_dt, yerr=dt_err, fmt='o', label=f"Runs {start_run}-{end_run}: Δt cut {deltaT_cut[0]}-{deltaT_cut[1]} ns")
-        plt.xlabel("Δt (ns)", fontsize=14)
-        plt.ylabel("Counts", fontsize=14)
-        plt.title("Aggregated Δt Histogram (Cut Events)", fontsize=16)
-        if logscale:
-            plt.yscale("log")
-        plt.legend(fontsize=12)
-        plt.tight_layout()
-        dt_total_img = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_delta_t_histogram.png")
-        plt.savefig(dt_total_img)
-        plt.close()
-        dt_total_pkl = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_delta_t_histogram.pkl")
-        with open(dt_total_pkl, "wb") as f:
-            pickle.dump({"hist": hist_dt, "bin_centers": dt_centers, "errorbars": dt_err}, f)
-    
-    # Aggregated Cut Total Charge Histogram.
-    if aggregated_cut_sum_area:
-        all_sum_area_cut = np.concatenate(aggregated_cut_sum_area)
-        sa_bins_total = np.linspace(sum_area_cut[0], sum_area_cut[1], bins_num_cut+1)
-        hist_sa, _ = np.histogram(all_sum_area_cut, bins=sa_bins_total)
-        sa_centers = (sa_bins_total[:-1] + sa_bins_total[1:]) / 2
-        sa_err = np.sqrt(hist_sa)
-        plt.figure(figsize=(10, 7))
-        plt.errorbar(sa_centers, hist_sa, yerr=sa_err, fmt='o', label=f"Runs {start_run}-{end_run}: sum_area cut {sum_area_cut[0]}-{sum_area_cut[1]} ADC")
-        plt.xlabel("Total Charge (ADC)", fontsize=14)
-        plt.ylabel("Counts", fontsize=14)
-        plt.title("Aggregated Total Charge Histogram (Cut Events)", fontsize=16)
-        if logscale:
-            plt.yscale("log")
-        plt.legend(fontsize=12)
-        plt.tight_layout()
-        sa_total_img = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_sum_area_histogram.png")
-        plt.savefig(sa_total_img)
-        plt.close()
-        sa_total_pkl = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_sum_area_histogram.pkl")
-        with open(sa_total_pkl, "wb") as f:
-            pickle.dump({"hist": hist_sa, "bin_centers": sa_centers, "errorbars": sa_err}, f)
-    
-    print(f"\nAggregated histograms saved in: {total_folder}")
+    # Aggregated results storage
+    aggregated = {'delta_t': [], 'sum_area_cut': []}
+
+    # Process each run in range
+    for run in range(start_run, end_run + 1):
+        result = process_run(
+            run, data_dir, output_dir,
+            delta_t_cut, area_cut, bins_cut,
+            multiplicity_adc, multiplicity_cut
+        )
+        if result is not None:
+            dt_vals, sa_vals = result
+            aggregated['delta_t'].append(dt_vals)
+            aggregated['sum_area_cut'].append(sa_vals)
+
+    # (Optional) Further aggregation and plotting can be implemented here
 
 if __name__ == '__main__':
     main()
