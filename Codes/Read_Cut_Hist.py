@@ -50,7 +50,7 @@ def save_trigger_bits_histogram(df, img_path, pkl_path, logscale=True):
     print(f"Trigger Bit Histogram data saved to: {pkl_path}")
 
 # %%
-def save_all_histogram(df, column_name, trigger_column, trigger_value, img_path, pkl_path, bins_num=100, logscale=True):
+def save_all_histogram(df, column_name, trigger_column, trigger_value, img_path, pkl_path, bins_num, bins_start, bins_end, logscale=True):
     """
     Generates and saves histograms of the specified column, comparing all data vs. a subset 
     where the trigger condition is met. Saves the histogram figure as a JPEG and the histogram 
@@ -70,15 +70,15 @@ def save_all_histogram(df, column_name, trigger_column, trigger_value, img_path,
     trigger_data = df.loc[df[trigger_column] == trigger_value, column_name].to_numpy()
     
     plt.figure(figsize=(12, 8))
-    bins_arr = np.linspace(0, 100000, bins_num + 1)
+    bins_arr = np.linspace(bins_start, bins_end, bins_num)
     plt.hist(all_data, bins=bins_arr, alpha=0.7, edgecolor='black', label='All triggerBits')
     plt.hist(trigger_data, bins=bins_arr, alpha=0.7, edgecolor='black', label=f'{trigger_column} = {trigger_value}')
     
-    plt.xlabel("Total Charge (ADC)", fontsize=25)
+    plt.xlabel(column_name, fontsize=25)  
     plt.ylabel("Events", fontsize=25)
     plt.xticks(fontsize=20)
     plt.yticks(fontsize=20)
-    plt.title("Histogram of Total Charge (ADC)", fontsize=25)
+    plt.title(f"Histogram of {column_name}", fontsize=25)  
     if logscale:
         plt.yscale("log")
     plt.legend(fontsize=20)
@@ -86,9 +86,10 @@ def save_all_histogram(df, column_name, trigger_column, trigger_value, img_path,
     plt.grid(which='major', axis='y', linestyle='-', linewidth=0.75, color='gray')
     plt.grid(which='minor', axis='y', linestyle=':', linewidth=0.5, color='gray')
     plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
-    plt.xlim(0, 100000)
+    plt.xlim(bins_start, bins_end)  
     plt.tight_layout()
-    
+    plt.minorticks_on()
+    plt.grid(which='both')
     plt.savefig(img_path)
     plt.show()
     
@@ -96,11 +97,11 @@ def save_all_histogram(df, column_name, trigger_column, trigger_value, img_path,
     with open(pkl_path, "wb") as f:
         pickle.dump(hist_data, f)
     
-    print(f"Energy Histogram image saved to: {img_path}")
-    print(f"Energy Histogram data saved to: {pkl_path}")
+    print(f"Histogram image saved to: {img_path}")
+    print(f"Histogram data saved to: {pkl_path}")
 
 # %%
-def Cut_DeltaT_Totalcharge(df, deltaT_cut, sum_area_cut, bins_num, save_folder, run_number, logscale=True):
+def Cut_DeltaT_Totalcharge(df, deltaT_cut, sum_area_cut, bins_num, save_folder, run_number, multiplicity_cut=6, logscale=True):
     """
     For after-veto events (triggerBits==2), compute Δt from the previous muon event (triggerBits>=32), 
     apply a Δt cut and a total charge (sum_area) cut, and then produce two histograms (Δt and sum_area).
@@ -122,7 +123,7 @@ def Cut_DeltaT_Totalcharge(df, deltaT_cut, sum_area_cut, bins_num, save_folder, 
     
     # Identify muon and after-veto events and compute Δt.
     muon_mask = df['triggerBits'] >= 32
-    after_veto_mask = df['triggerBits'] == 2
+    after_veto_mask = (df['triggerBits'] == 2) & (df['multiplicity'] > multiplicity_cut)
     muon_times = df.loc[muon_mask, 'nsTime'].values
     after_veto_df = df.loc[after_veto_mask].copy()
     event_times = after_veto_df['nsTime'].values
@@ -132,14 +133,24 @@ def Cut_DeltaT_Totalcharge(df, deltaT_cut, sum_area_cut, bins_num, save_folder, 
     delta_t[valid] = event_times[valid] - muon_times[insertion_indices[valid] - 1]
     after_veto_df['delta_t'] = delta_t
     
+    print(f"Run {run_number}: Number of after-veto events before cuts: {len(after_veto_df)}")
+    
     dt_min, dt_max = deltaT_cut
     s_min, s_max = sum_area_cut
+    print(f"Run {run_number}: deltaT_cut = {deltaT_cut}, sum_area_cut = {sum_area_cut}")
+    
     selected = after_veto_df[
         (after_veto_df['delta_t'] >= dt_min) &
-        (after_veto_df['delta_t'] <= dt_max) &
-        (after_veto_df['sum_area'] >= s_min) &
-        (after_veto_df['sum_area'] <= s_max)
+        (after_veto_df['delta_t'] <= dt_max)
     ]
+    print(f"Run {run_number}: Number of events after deltaT cut: {len(selected)}")
+    
+    selected = selected[
+        (selected['sum_area'] >= s_min) &
+        (selected['sum_area'] <= s_max)
+    ]
+    print(f"Run {run_number}: Number of events after sum_area cut: {len(selected)}")
+    
     if selected.empty:
         print(f"Run {run_number}: No events passed the selection cuts.")
         return None, None  # Return None if no selected events.
@@ -156,13 +167,15 @@ def Cut_DeltaT_Totalcharge(df, deltaT_cut, sum_area_cut, bins_num, save_folder, 
         pickle.dump(dt_data, f)
     
     plt.figure(figsize=(10, 7))
-    plt.errorbar(dt_centers, dt_hist, yerr=dt_err, fmt='o', label=f"Run {run_number}: Δt cut {dt_min}-{dt_max} ns")
+    plt.errorbar(dt_centers, dt_hist, yerr=dt_err, fmt='o', label=f"Run {run_number}: Δt cut {dt_min}-{dt_max} ns, sum_area cut {s_min}-{s_max} ADC")
     plt.xlabel("Δt (ns)", fontsize=14)
     plt.ylabel("Counts", fontsize=14)
     plt.title("Δt Histogram (Selected Events)", fontsize=16)
     if logscale:
         plt.yscale("log")
     plt.legend(fontsize=12)
+    plt.minorticks_on()
+    plt.grid(which='both')
     plt.tight_layout()
     dt_plot_path = os.path.join(save_folder, 'delta_t_histogram.png')
     plt.savefig(dt_plot_path)
@@ -180,13 +193,15 @@ def Cut_DeltaT_Totalcharge(df, deltaT_cut, sum_area_cut, bins_num, save_folder, 
         pickle.dump(s_data, f)
     
     plt.figure(figsize=(10, 7))
-    plt.errorbar(s_centers, s_hist, yerr=s_err, fmt='o', label=f"Run {run_number}: sum_area cut {s_min}-{s_max} ADC")
+    plt.errorbar(s_centers, s_hist, yerr=s_err, fmt='o', label=f"Run {run_number}: delta_t cut {dt_min}-{dt_max} ns, sum_area cut {s_min}-{s_max} ADC")
     plt.xlabel("Total Charge (ADC)", fontsize=14)
     plt.ylabel("Counts", fontsize=14)
     plt.title("Total Charge Histogram (Selected Events)", fontsize=16)
     if logscale:
         plt.yscale("log")
     plt.legend(fontsize=12)
+    plt.minorticks_on()
+    plt.grid(which='both')
     plt.tight_layout()
     s_plot_path = os.path.join(save_folder, 'sum_area_histogram.png')
     plt.savefig(s_plot_path)
@@ -217,12 +232,14 @@ def main():
     # Set common cut values.
     deltaT_cut = (0, 20000)    # in ns
     sum_area_cut = (0, 100000)   # ADC units
-    bins_num_cut = 100             # for cut histograms
+    bins_num_cut = 20             # for cut histograms
+    multiplicity_cut = 0
+    multiplicity_ADC = 30_00
     # Log scale switch for all functions.
     logscale = True
     
     # Folders for individual results.
-    newcut_folder = '/raid1/genli/Data_D2O/'+f"run{start_run}_{end_run}_dt{deltaT_cut[0]}-{deltaT_cut[1]}_sa{sum_area_cut[0]}-{sum_area_cut[1]}"+'/'
+    newcut_folder = '/raid1/genli/Data_D2O/'+f"run{start_run}_{end_run}_dt{deltaT_cut[0]}-{deltaT_cut[1]}_sa{sum_area_cut[0]}-{sum_area_cut[1]}_mcut{multiplicity_cut}/"
     os.makedirs(newcut_folder, exist_ok=True) 
     # Lists to collect aggregated raw data.
     aggregated_trigger_bits = []
@@ -230,7 +247,9 @@ def main():
     aggregated_energy_trigger = []
     aggregated_cut_deltaT = []
     aggregated_cut_sum_area = []
-    
+    aggregated_multiplicity_all = []
+    aggregated_multiplicity_trigger = []
+
     # Process each run.
     for run in range(start_run, end_run+1):
         print(f"\nProcessing run: {run}")
@@ -245,7 +264,10 @@ def main():
                     scalar_data = {key: ak.to_numpy(chunk[key]) for key in ["eventID", "nsTime", "triggerBits"]}
                     array_data = {key: list(ak.to_numpy(chunk[key])) for key in ["pulseH", "area"]}
                     area_arrays = ak.to_numpy(chunk["area"])
-                    scalar_data['sum_area'] = np.sum(area_arrays[:, 0:11], axis=1)
+                    scalar_data['sum_area'] = np.sum(area_arrays[:, 0:12], axis=1)
+                    #add one more channel  to scalar_data, multiplicity, which count the number of channels with area > multiplicity_ADC
+                    scalar_data['multiplicity'] = np.sum(area_arrays[:, 0:12] > multiplicity_ADC, axis=1)
+                    # Combine scalar and array data into a single DataFrame.
                     combined_data = {**scalar_data, **array_data}
                     data_list.append(pd.DataFrame(combined_data))
         except Exception as e:
@@ -273,17 +295,25 @@ def main():
         # Save energy (total charge) histogram comparing all vs. trigger==2.
         energy_img = os.path.join(general_hist_folder, f"run{run}_sum_area_histogram.jpg")
         energy_pkl = os.path.join(general_hist_folder, f"run{run}_sum_area_histogram.pkl")
-        save_all_histogram(df_new, "sum_area", "triggerBits", 2, energy_img, energy_pkl, bins_num=bins_num_cut, logscale=logscale)
+        save_all_histogram(df_new, "sum_area", "triggerBits", 2, energy_img, energy_pkl, bins_num=bins_num_cut, bins_start=0, bins_end=100000, logscale=logscale)
         
+        # Save multiplicity histogram.
+        multiplicity_img = os.path.join(general_hist_folder, f"run{run}_multiplicity_histogram.jpg")
+        multiplicity_pkl = os.path.join(general_hist_folder, f"run{run}_multiplicity_histogram.pkl")
+        save_all_histogram(df_new, "multiplicity", "triggerBits", 2, multiplicity_img, multiplicity_pkl, bins_num=13, bins_start=0, bins_end=12, logscale=logscale)
+
         # Folder for cut histograms for this run.
         run_hist_folder = newcut_folder + f"run{run}_cuthist/"
         os.makedirs(run_hist_folder, exist_ok=True)
-        cut_deltaT, cut_totalcharge = Cut_DeltaT_Totalcharge(df_new, deltaT_cut, sum_area_cut, bins_num_cut, run_hist_folder, run, logscale=logscale)
+        cut_deltaT, cut_totalcharge = Cut_DeltaT_Totalcharge(df_new, deltaT_cut, sum_area_cut, bins_num_cut, run_hist_folder, run, multiplicity_cut, logscale=logscale)
         
         # Collect raw data for aggregated histograms.
         aggregated_trigger_bits.append(df_new['triggerBits'].to_numpy())
         aggregated_energy_all.append(df_new['sum_area'].to_numpy())
         aggregated_energy_trigger.append(df_new.loc[df_new['triggerBits'] == 2, 'sum_area'].to_numpy())
+        aggregated_multiplicity_all.append(df_new['multiplicity'].to_numpy())
+        aggregated_multiplicity_trigger.append(df_new.loc[df_new['triggerBits'] == 2, 'multiplicity'].to_numpy())
+
         if cut_deltaT is not None and cut_totalcharge is not None:
             aggregated_cut_deltaT.append(cut_deltaT)
             aggregated_cut_sum_area.append(cut_totalcharge)
@@ -333,6 +363,29 @@ def main():
     energy_total_pkl = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_sum_area_histogram.pkl")
     with open(energy_total_pkl, "wb") as f:
         pickle.dump({"all_data": all_energy, "trigger_data": trig_energy, "bins": energy_bins}, f)
+    
+    # Aggregated multiplicity Histogram.
+    all_multiplicity = np.concatenate(aggregated_multiplicity_all) if aggregated_multiplicity_all else np.array([])
+    trig_multiplicity = np.concatenate(aggregated_multiplicity_trigger) if aggregated_multiplicity_trigger else np.array([])
+    multiplicity_bins = np.linspace(0, 13, 14)
+    plt.figure(figsize=(12, 8))
+    # plt.hist(all_multiplicity, bins=multiplicity_bins, alpha=0.7, edgecolor='black', label='All triggerBits')
+    plt.hist(trig_multiplicity, bins=multiplicity_bins, alpha=0.7, edgecolor='black', label="triggerBits == 2")
+    plt.xlabel("Multiplicity", fontsize=25)
+    plt.ylabel("Events", fontsize=25)
+    plt.xticks(fontsize=20)
+    plt.yticks(fontsize=20)
+    plt.title("Aggregated Histogram of Multiplicity", fontsize=25)
+    if logscale:
+        plt.yscale("log")
+    plt.legend(fontsize=20)
+    plt.tight_layout()
+    multiplicity_total_img = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_multiplicity_histogram.jpg")
+    plt.savefig(multiplicity_total_img)
+    plt.close()
+    multiplicity_total_pkl = os.path.join(total_folder, f"Total_run_{start_run}_{end_run}_multiplicity_histogram.pkl")
+    with open(multiplicity_total_pkl, "wb") as f:
+        pickle.dump({"all_data": all_multiplicity, "trigger_data": trig_multiplicity, "bins": multiplicity_bins}, f)
     
     # Aggregated Cut Δt Histogram.
     if aggregated_cut_deltaT:

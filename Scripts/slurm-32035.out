@@ -1,0 +1,20 @@
+
+Processing run: 19520
+Run 19520: Finished processing ROOT file into DataFrame.
+Run 19520: DataFrame saved to: /raid1/genli/Data_D2O/run19520_data_new.pkl
+Trigger Bit Histogram image saved to: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19520_gneral/run19520_trigger_bits_histogram.png
+Trigger Bit Histogram data saved to: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19520_gneral/run19520_trigger_bits_histogram.pkl
+Energy Histogram image saved to: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19520_gneral/run19520_sum_area_histogram.jpg
+Energy Histogram data saved to: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19520_gneral/run19520_sum_area_histogram.pkl
+Run 19520: Δt and Total Charge histograms (with cuts) saved in: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19520_cuthist/
+
+Processing run: 19521
+Run 19521: Finished processing ROOT file into DataFrame.
+Run 19521: DataFrame saved to: /raid1/genli/Data_D2O/run19521_data_new.pkl
+Trigger Bit Histogram image saved to: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19521_gneral/run19521_trigger_bits_histogram.png
+Trigger Bit Histogram data saved to: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19521_gneral/run19521_trigger_bits_histogram.pkl
+Energy Histogram image saved to: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19521_gneral/run19521_sum_area_histogram.jpg
+Energy Histogram data saved to: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19521_gneral/run19521_sum_area_histogram.pkl
+Run 19521: Δt and Total Charge histograms (with cuts) saved in: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/run19521_cuthist/
+
+Aggregated histograms saved in: /raid1/genli/Data_D2O/run19520_19521_dt0-10000_sa5000-100000/Total/
