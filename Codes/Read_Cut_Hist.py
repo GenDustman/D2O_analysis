@@ -56,7 +56,6 @@ def plot_histogram(arrays, labels, bins, img_path, title, xlabel,
     """
     plt.figure(figsize=figsize)
     outputs = []
-    # Draw each histogram with semi-transparent bars
     for data, label in zip(arrays, labels):
         counts, edges, _ = plt.hist(
             data,
@@ -66,21 +65,17 @@ def plot_histogram(arrays, labels, bins, img_path, title, xlabel,
             label=label
         )
         outputs.append((counts, edges))
-    # Set axes labels and title
     plt.xlabel(xlabel)
     plt.ylabel('Events')
     plt.title(title)
-    # Optionally set log scale
     if logscale:
         plt.yscale('log')
     plt.legend()
     plt.minorticks_on()
-    # Add grid lines for readability
     plt.grid(which='major', axis='y', linestyle='-', linewidth=0.75, color='gray')
     plt.grid(which='minor', axis='y', linestyle=':', linewidth=0.5, color='gray')
     plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
     plt.tight_layout()
-    # Save and close figure
     plt.savefig(img_path)
     plt.close()
     return outputs
@@ -99,19 +94,14 @@ def compute_delta_t(df, muon_bits, veto_bits, mult_thresh):
     Returns:
         DataFrame of veto events with a new 'delta_t' column in ns.
     """
-    # Identify muon events (triggerBits >= threshold)
     muon_mask = df['triggerBits'] >= muon_bits
-    # Identify veto events (exact triggerBits AND multiplicity requirement)
     veto_mask = (df['triggerBits'] == veto_bits) & (df['multiplicity'] > mult_thresh)
     muon_times = df.loc[muon_mask, 'nsTime'].values
-    # Copy the veto events to avoid SettingWithCopy
     events = df.loc[veto_mask].copy()
     times = events['nsTime'].values
-    # Find insertion indices: position in muon_times just after each veto time
     idx = np.searchsorted(muon_times, times, side='right')
     delta_t = np.full(times.shape, np.nan)
     valid = idx > 0
-    # Compute Δt only where a preceding muon exists
     delta_t[valid] = times[valid] - muon_times[idx[valid] - 1]
     events['delta_t'] = delta_t
     return events
@@ -141,78 +131,42 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
     s_min, s_max = area_range
 
     ensure_dir(save_dir)
-    # Drop events without a computed Δt
     sel = events.dropna(subset=['delta_t']).copy()
     print(f"{run_label}: after Δt NaN drop: {len(sel)} events")
-
-    # Δt cut
     sel = sel[(sel['delta_t'] >= dt_min) & (sel['delta_t'] <= dt_max)]
     print(f"{run_label}: after Δt cut: {len(sel)} events")
-
-    # sum_area cut
     sel = sel[(sel['sum_area'] >= s_min) & (sel['sum_area'] <= s_max)]
     print(f"{run_label}: after sum_area cut: {len(sel)} events")
-
-    # Compute per-event time-std over channels 0–11 from 'time_array'
     std_vals = np.array([np.std(arr[:12]) for arr in sel['time_array']])
-    # time-std cut
     sel = sel[std_vals < time_std_cut]
     print(f"{run_label}: after time-std < {time_std_cut} ns cut: {len(sel)} events")
-
     if sel.empty:
         return None, None
-
-    # Prepare Δt histogram
     dt_bins = np.linspace(dt_min, dt_max, bins+1)
     dt_counts, dt_edges = np.histogram(sel['delta_t'], bins=dt_bins)
     dt_centers = 0.5 * (dt_edges[:-1] + dt_edges[1:])
     dt_err = np.sqrt(dt_counts)
-    # Save histogram data
-    save_pickle(
-        {'hist': dt_counts, 'centers': dt_centers, 'errors': dt_err},
-        save_dir / 'delta_t_hist.pkl'
-    )
-    # Plot Δt errorbar
+    save_pickle({'hist': dt_counts, 'centers': dt_centers, 'errors': dt_err},
+                save_dir / 'delta_t_hist.pkl')
     plt.errorbar(dt_centers, dt_counts, yerr=dt_err, fmt='o', label=run_label)
-    plt.xlabel('Δt (ns)')
-    plt.ylabel('Counts')
-    plt.title('Δt Histogram')
-    if logscale:
-        plt.yscale('log')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(save_dir / 'delta_t_hist.png')
-    plt.close()
-
-    # Prepare sum_area histogram
+    plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title('Δt Histogram')
+    if logscale: plt.yscale('log')
+    plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'delta_t_hist.png'); plt.close()
     s_bins = np.linspace(s_min, s_max, bins+1)
     s_counts, s_edges = np.histogram(sel['sum_area'], bins=s_bins)
     s_centers = 0.5 * (s_edges[:-1] + s_edges[1:])
     s_err = np.sqrt(s_counts)
-    save_pickle(
-        {'hist': s_counts, 'centers': s_centers, 'errors': s_err},
-        save_dir / 'sum_area_hist.pkl'
-    )
-    # Plot sum_area errorbar
+    save_pickle({'hist': s_counts, 'centers': s_centers, 'errors': s_err},
+                save_dir / 'sum_area_hist.pkl')
     plt.errorbar(s_centers, s_counts, yerr=s_err, fmt='o', label=run_label)
-    plt.xlabel('Sum Area (ADC)')
-    plt.ylabel('Counts')
-    plt.title('Total Charge Histogram')
-    if logscale:
-        plt.yscale('log')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(save_dir / 'sum_area_hist.png')
-    plt.close()
-
-    # Return arrays for aggregation
+    plt.xlabel('Sum Area (ADC)'); plt.ylabel('Counts'); plt.title('Total Charge Histogram')
+    if logscale: plt.yscale('log')
+    plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'sum_area_hist.png'); plt.close()
     return sel['delta_t'].values, sel['sum_area'].values
 
 
 def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
-                mult_adc, mult_thresh, time_std_cut, logscale):
+                mult_adc, multiplicity_cut, time_std_cut, logscale):
     """
     Process a single run: read data, make histograms, apply cuts.
 
@@ -224,7 +178,7 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
         area_cut: sum_area cut tuple (min, max).
         bins: Number of bins for histograms.
         mult_adc: ADC threshold for multiplicity.
-        mult_thresh: Multiplicity count threshold.
+        multiplicity_cut: Multiplicity count threshold.
         time_std_cut: Time-std cut in ns.
         logscale: Log scale for plot y-axes.
 
@@ -236,67 +190,91 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
     if not infile.exists():
         print(f"Missing file: {infile}")
         return None
-
-    # Iterate tree in chunks to build full DataFrame
     dfs = []
     for chunk in uproot.open(infile)['tree'].iterate(
-        ['eventID','nsTime','triggerBits','area','pulseH'], library='ak', step_size='100 MB'):
+        ['eventID', 'nsTime', 'triggerBits', 'area', 'pulseH'], library='ak', step_size='100 MB'):
         areas = ak.to_numpy(chunk['area'])
-        times_ch = ak.to_numpy(chunk['pulseH'])  # channel times
+        times_ch = ak.to_numpy(chunk['pulseH'])
         df = pd.DataFrame({
             'eventID': ak.to_numpy(chunk['eventID']),
             'nsTime': ak.to_numpy(chunk['nsTime']),
             'triggerBits': ak.to_numpy(chunk['triggerBits']),
-            # sum of first 12 channels
             'sum_area': np.sum(areas[:, :12], axis=1),
-            # count of channels above ADC threshold
             'multiplicity': np.sum(areas[:, :12] > mult_adc, axis=1),
             'time_array': list(times_ch)
         })
         dfs.append(df)
     if not dfs:
         return None
-    # Concatenate all chunks and pickle raw DataFrame
     df_all = pd.concat(dfs, ignore_index=True)
     df_all.to_pickle(output_dir / f"run{run}_data.pkl")
-
-    # Prepare output dirs
     hist_dir = output_dir / f"run{run}" / "histograms"
     cut_dir = output_dir / f"run{run}" / "cuthist"
-    ensure_dir(hist_dir)
-    ensure_dir(cut_dir)
-
-    # Basic histograms for triggerBits and sum_area
-    plot_histogram(
-        [df_all['triggerBits'].to_numpy()], ['triggerBits'],
-        np.arange(0, 36),
-        hist_dir / f"{run}_triggerBits.png",
-        'Trigger Bits Distribution',
-        'triggerBits',
-        logscale
-    )
-    plot_histogram(
-        [df_all['sum_area'], df_all.loc[df_all['triggerBits']==2, 'sum_area']],
-        ['All', 'Trig=2'],
-        np.linspace(0, 100000, bins+1),
-        hist_dir / f"{run}_sum_area.png",
-        'Sum Area Comparison',
-        'ADC',
-        logscale
-    )
-
-    # Compute Δt and apply cuts
-    events = compute_delta_t(df_all, muon_bits=32, veto_bits=2, mult_thresh=mult_thresh)
+    ensure_dir(hist_dir); ensure_dir(cut_dir)
+    plot_histogram([df_all['triggerBits'].to_numpy()], ['triggerBits'],
+                   np.arange(0, 36), hist_dir / f"{run}_triggerBits.png",
+                   'Trigger Bits Distribution', 'triggerBits', logscale)
+    plot_histogram([df_all['sum_area'], df_all.loc[df_all['triggerBits'] == 2, 'sum_area']],
+                   ['All', 'Trig=2'], np.linspace(0, 100000, bins + 1),
+                   hist_dir / f"{run}_sum_area.png", 'Sum Area Comparison', 'ADC', logscale)
+    events = compute_delta_t(df_all, muon_bits=32, veto_bits=2, mult_thresh=multiplicity_cut)
     return save_cut_histograms(
-        events,
-        delta_t_cut,
-        area_cut,
-        bins,
-        cut_dir,
-        f"Run {run}",
-        time_std_cut,
-        logscale
+        events, delta_t_cut, area_cut, bins, cut_dir,
+        f"Run {run}", time_std_cut, logscale
     )
+
+
+def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
+                    fit_window, output_dir, logscale):
+    """
+    Generate aggregated Δt and sum_area histograms with τ fit.
+
+    Args:
+        aggregated: Dict with 'delta_t' and 'sum_area_cut' lists.
+        delta_t_cut: (min, max) ns.
+        area_cut: (min, max) ADC.
+        bins: Bin count.
+        fit_window: (t_low, t_high) ns for fitting τ.
+        output_dir: Directory for aggregated outputs.
+        logscale: Use log y-axis.
+    """
+    ensure_dir(output_dir)
+    dt_min, dt_max = delta_t_cut
+    all_dt = np.concatenate(aggregated['delta_t']) if aggregated['delta_t'] else np.array([])
+    if all_dt.size:
+        dt_bins = np.linspace(dt_min, dt_max, bins + 1)
+        hist_dt, dt_edges = np.histogram(all_dt, bins=dt_bins)
+        dt_centers = 0.5 * (dt_edges[:-1] + dt_edges[1:])
+        dt_err = np.sqrt(hist_dt)
+        t_low, t_high = fit_window
+        mask = (dt_centers >= t_low) & (dt_centers <= t_high) & (hist_dt > 0)
+        fit_x = dt_centers[mask]; fit_y = np.log(hist_dt[mask])
+        (slope, intercept), cov = np.polyfit(fit_x, fit_y, 1, cov=True)
+        slope_err = np.sqrt(cov[0,0]); tau = -1.0 / slope; tau_err = slope_err / (slope**2)
+        fit_line = np.exp(intercept + slope * dt_centers)
+        plt.errorbar(dt_centers, hist_dt, yerr=dt_err, fmt='o', label='Data')
+        plt.plot(dt_centers, fit_line, '--', label=f'Fit τ={tau:.1f}±{tau_err:.1f} ns')
+        plt.axvspan(t_low, t_high, color='gray', alpha=0.2, label='Fit Range')
+        plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title(f'Aggregated Δt')
+        if logscale: plt.yscale('log')
+        plt.legend(); plt.grid(which='both'); plt.tight_layout()
+        plt.savefig(output_dir / 'aggregated_delta_t.png'); plt.close()
+        save_pickle({'centers': dt_centers, 'hist': hist_dt, 'errors': dt_err, 'tau': tau},
+                    output_dir / 'aggregated_delta_t.pkl')
+    all_sa = np.concatenate(aggregated['sum_area_cut']) if aggregated['sum_area_cut'] else np.array([])
+    if all_sa.size:
+        sa_min, sa_max = area_cut
+        sa_bins = np.linspace(sa_min, sa_max, bins + 1)
+        hist_sa, sa_edges = np.histogram(all_sa, bins=sa_bins)
+        sa_centers = 0.5 * (sa_edges[:-1] + sa_edges[1:])
+        sa_err = np.sqrt(hist_sa)
+        plt.errorbar(sa_centers, hist_sa, yerr=sa_err, fmt='o', label=f'Runs')
+        plt.xlabel('Total Charge (ADC)'); plt.ylabel('Counts'); plt.title(f'Aggregated Total Charge')
+        if logscale: plt.yscale('log')
+        plt.legend(); plt.grid(which='both'); plt.tight_layout()
+        plt.savefig(output_dir / 'aggregated_sum_area.png'); plt.close()
+        save_pickle({'centers': sa_centers, 'hist': hist_sa, 'errors': sa_err},
+                    output_dir / 'aggregated_sum_area.pkl')
 
 
 def main():
@@ -318,11 +296,8 @@ def main():
     time_std_cut     = 2.5*16        # Max std of channel times in ns, 1 ADC = 16 ns
     logscale         = True          # Use log scale for y-axes
     # --------------------------------
-    
     dt_min, dt_max = delta_t_cut
     sa_min, sa_max = area_cut
-    
-    # Print overall configuration
     print("=== Configuration ===")
     print(f"Runs: {start_run} to {end_run}")
     print(f"Δt cut: {delta_t_cut}")
@@ -341,13 +316,11 @@ def main():
     )
     ensure_dir(output_dir)
 
-    # Containers for aggregated data
     aggregated = {
         'delta_t': [],
         'sum_area_cut': []
     }
 
-    # Loop through runs and process
     for run in range(start_run, end_run + 1):
         result = process_run(
             run,
@@ -366,64 +339,16 @@ def main():
             aggregated['delta_t'].append(dt_vals)
             aggregated['sum_area_cut'].append(sa_vals)
 
-    # --- Aggregated Histograms with Error Bars ---
-    # Aggregated Δt with error bars and exponential fit
-    if aggregated['delta_t']:
-        all_dt = np.concatenate(aggregated['delta_t'])
-        dt_bins = np.linspace(dt_min, dt_max, bins+1)
-        dt_hist, dt_edges = np.histogram(all_dt, bins=dt_bins)
-        dt_centers = 0.5*(dt_edges[:-1] + dt_edges[1:])
-        dt_err = np.sqrt(dt_hist)
-
-        # Perform linear fit on log-counts: ln(N) = intercept + slope * t
-        # define your desired fit window:
-        t_low, t_high = 2500, 10000   # in ns
-
-        # build mask: only positive bins, inside [t_low, t_high]
-        fit_mask = (
-            (dt_centers >= t_low) &
-            (dt_centers <= t_high) &
-            (dt_hist    > 0)
-        )
-
-        # pick out the points to fit
-        fit_x = dt_centers[fit_mask]
-        fit_y = np.log(dt_hist[fit_mask])
-
-        # do the linear regression
-        (slope, intercept), cov = np.polyfit(fit_x, fit_y, 1, cov=True)
-        slope_err = np.sqrt(cov[0,0])
-        tau = -1.0/slope
-        tau_err = slope_err/(slope**2)
-        fit_line = np.exp(intercept + slope*dt_centers)
-        
-        # Plot errorbar and fit
-        plt.errorbar(dt_centers, dt_hist, yerr=dt_err, fmt='o', label='Data')
-        plt.plot(dt_centers, fit_line, '--', label=f'Fit τ={tau:.1f}±{tau_err:.1f} ns')
-        #shade the fit region, between t_low and t_high
-        plt.axvspan(t_low, t_high, color='gray', alpha=0.2, label='Fit Range')
-        plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title(f'Aggregated Δt ({start_run}-{end_run})')
-        if logscale: plt.yscale('log')
-        plt.legend(); plt.grid(which='both'); plt.tight_layout()
-        plt.savefig(output_dir/'aggregated_delta_t.png'); plt.close()
-        save_pickle({'centers':dt_centers,'hist':dt_hist,'errors':dt_err,'fit_slope':slope,'fit_intercept':intercept,'tau':tau},
-                    output_dir/'aggregated_delta_t.pkl')
-        print(f"Saved aggregated Δt histogram with fit to {output_dir/'aggregated_delta_t.png'}")
-
-    # Aggregated Total Charge
-    if aggregated['sum_area_cut']:
-        all_sa = np.concatenate(aggregated['sum_area_cut'])
-        sa_bins = np.linspace(area_cut[0], area_cut[1], bins + 1)
-        sa_hist, sa_edges = np.histogram(all_sa, bins=sa_bins)
-        sa_centers = (sa_edges[:-1] + sa_edges[1:]) / 2
-        sa_err = np.sqrt(sa_hist)
-        plt.errorbar(sa_centers, sa_hist, yerr=sa_err, fmt='o', label=f'Runs {start_run}-{end_run}')
-        plt.xlabel('Total Charge (ADC)'); plt.ylabel('Counts'); plt.title(f'Aggregated Total Charge ({start_run}-{end_run})')
-        if logscale: plt.yscale('log')
-        plt.legend(); plt.grid(which='both'); plt.tight_layout()
-        plt.savefig(output_dir/'aggregated_sum_area.png'); plt.close()
-        save_pickle({'hist': sa_hist, 'bin_centers': sa_centers, 'errorbars': sa_err}, output_dir/'aggregated_sum_area.pkl')
-        print(f"Saved aggregated total charge histogram with error bars to {output_dir/'aggregated_sum_area.png'}")
+    # Delegate aggregation to separate function
+    aggregate_plots(
+        aggregated,
+        delta_t_cut,
+        area_cut,
+        bins,
+        (2500, 10000),  # fit window
+        output_dir,
+        logscale
+    )
 
 if __name__ == '__main__':
     main()
