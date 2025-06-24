@@ -291,7 +291,7 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
         return None
     dfs = []
     for chunk in uproot.open(infile)['tree'].iterate(
-        ['eventID', 'nsTime', 'triggerBits', 'area', 'pulseH'], library='ak', step_size='100 MB'):
+        ['eventID', 'nsTime', 'triggerBits', 'area', 'pulseH'], library='ak', step_size='200 MB'):
         areas = ak.to_numpy(chunk['area'])
         times_ch = ak.to_numpy(chunk['pulseH'])
         
@@ -414,9 +414,9 @@ def main():
     delta_t_cut        = (0, 20000)      # Δt range in ns
     area_cut           = (0, 30000)      # Total charge (ADC) range
     bins               = 100             # Bins for cut histograms
-    multiplicity_adc   = 2*100           # ADC threshold per channel
-    multiplicity_cut   = 2               # Min channels above threshold
-    time_std_cut       = 5*16            # Max std of channel times in ns
+    multiplicity_adc   = 3*100           # ADC threshold per channel
+    multiplicity_cut   = 3               # Min channels above threshold
+    time_std_cut       = 10*16            # Max std of channel times in ns
     logscale           = True            # Use log scale for y-axes
     tau_fit_window     = (2500, 10000)   # Fit window for τ in ns
     low_light_fit_range = (-50, 400)      # Fit window for low-light analysis in ADC
