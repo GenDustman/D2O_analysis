@@ -3,6 +3,7 @@
 Refactored script for processing ROOT files with detailed configuration
 and an additional per-event time-std cut. Modular functions handle I/O,
 histogram plotting, Δt computation, and aggregated τ fitting.
+Includes low-light (triggerbit=16) analysis with multi-Gaussian fitting.
 """
 import sys
 from pathlib import Path
@@ -10,6 +11,8 @@ import pickle
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
+from scipy.optimize import curve_fit
 import uproot
 import awkward as ak
 
@@ -165,8 +168,96 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
     return sel['delta_t'].values, sel['sum_area'].values
 
 
+def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_bins=200):
+    """
+    Plots and fits sum_area for channels 0-11 for low-light events (triggerbit=16).
+
+    Args:
+        area_data: Numpy array of shape (n_events, n_channels) with area values.
+        output_dir: Directory to save the plot.
+        file_label: String to include in the output filename (e.g., 'Run123' or 'Aggregated').
+        hist_range: Tuple (min, max) for the area histogram range.
+        hist_bins: Number of bins for the area histograms.
+    """
+    if area_data.size == 0:
+        print(f"No low-light data to process for {file_label}.")
+        return
+
+    def constrained_gaussians(x, a0, mu0, sig0, a1, mu1, sig1, a2, a3):
+        """
+        Fit function: pedestal + 3 constrained photoelectron peaks.
+        """
+        # Ensure variance is non-negative
+        sig2_sq = 2 * sig1**2 - sig0**2
+        sig3_sq = 3 * sig1**2 - 2 * sig0**2
+        if sig2_sq < 0 or sig3_sq < 0:
+            return np.inf
+
+        pedestal = a0 * np.exp(-0.5 * ((x - mu0) / sig0)**2)
+        spe = a1 * np.exp(-0.5 * ((x - mu1) / sig1)**2)
+        dpe = a2 * np.exp(-0.5 * ((x - 2 * mu1) / np.sqrt(sig2_sq))**2)
+        tpe = a3 * np.exp(-0.5 * ((x - 3 * mu1) / np.sqrt(sig3_sq))**2)
+        return pedestal + spe + dpe + tpe
+
+    fig, axes = plt.subplots(3, 4, figsize=(20, 15))
+    fig.suptitle(f'Low-Light Channel Area Fits ({file_label})', fontsize=16)
+    axes = axes.flatten()
+
+    for i in range(12):
+        ax = axes[i]
+        ch_data = area_data[:, i]
+        counts, edges = np.histogram(ch_data, bins=hist_bins, range=hist_range)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        ax.hist(ch_data, bins=edges, alpha=0.7, label=f'Ch {i} Data')
+
+        # Initial guesses for the fit
+        p0 = [
+            counts.max(), 0, 20,              # A0, mu0, sig0 (pedestal)
+            counts.max()/5, 100, 30,         # A1, mu1, sig1 (1PE)
+            counts.max()/25, counts.max()/125  # A2 (2PE), A3 (3PE)
+        ]
+        try:
+            # Fit only where there are counts to avoid issues
+            mask = counts > 0
+            popt, pcov = curve_fit(constrained_gaussians, centers[mask], counts[mask], p0=p0, maxfev=10000)
+            perr = np.sqrt(np.diag(pcov))
+
+            fit_x = np.linspace(hist_range[0], hist_range[1], 500)
+            ax.plot(fit_x, constrained_gaussians(fit_x, *popt), 'r-', label='Fit')
+            
+            # Create legend with fit parameters
+            param_text = (
+                f'$\\mu_0$: {popt[1]:.1f} ± {perr[1]:.1f}\n'
+                f'$\\sigma_0$: {popt[2]:.1f} ± {perr[2]:.1f}\n'
+                f'$\\mu_1$: {popt[4]:.1f} ± {perr[4]:.1f}\n'
+                f'$\\sigma_1$: {popt[5]:.1f} ± {perr[5]:.1f}'
+            )
+            ax.text(0.95, 0.95, param_text, transform=ax.transAxes, fontsize=8,
+                    verticalalignment='top', horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+        except RuntimeError:
+            ax.text(0.5, 0.5, 'Fit Failed', transform=ax.transAxes, color='red',
+                    ha='center', va='center')
+
+        ax.set_title(f'Channel {i}')
+        ax.set_xlabel('Sum Area (ADC)')
+        ax.set_ylabel('Events')
+        ax.set_yscale('log')
+        ax.grid(True, which='both', linestyle=':')
+        ax.legend(loc='lower left', fontsize='small')
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+    ensure_dir(output_dir)
+    plt.savefig(output_dir / f'{file_label}_low_light_fits.png')
+    print(f"Low-light fits saved to {output_dir / f'{file_label}_low_light_fits.png'}")
+    save_pickle({'params': popt, 'errors': perr}, output_dir / f'{file_label}_low_light_fit_params.pkl')
+    print(f"Low-light fit parameters saved to {output_dir / f'{file_label}_low_light_fit_params.pkl'}")
+    plt.close()
+
+
 def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
-                mult_adc, multiplicity_cut, time_std_cut, logscale):
+                mult_adc, multiplicity_cut, time_std_cut, logscale, low_light_fit_range):
     """
     Process a single run: read data, make histograms, apply cuts.
 
@@ -181,9 +272,10 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
         multiplicity_cut: Multiplicity count threshold.
         time_std_cut: Time-std cut in ns.
         logscale: Log scale for plot y-axes.
+        low_light_fit_range: Tuple (min, max) for low-light ADC fit.
 
     Returns:
-        Tuple (delta_t_vals, sum_area_vals) or None.
+        Tuple (delta_t_vals, sum_area_vals, low_light_area_data) or None.
     """
     print(f"Processing run {run}")
     infile = data_dir / f"run{run}_processed_v5.root"
@@ -201,7 +293,8 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
             'triggerBits': ak.to_numpy(chunk['triggerBits']),
             'sum_area': np.sum(areas[:, :12], axis=1),
             'multiplicity': np.sum(areas[:, :12] > mult_adc, axis=1),
-            'time_array': list(times_ch)
+            'time_array': list(times_ch),
+            'area_array': list(areas)  # Store full area array
         })
         dfs.append(df)
     if not dfs:
@@ -210,18 +303,35 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
     df_all.to_pickle(output_dir / f"run{run}_data.pkl")
     hist_dir = output_dir / f"run{run}" / "histograms"
     cut_dir = output_dir / f"run{run}" / "cuthist"
-    ensure_dir(hist_dir); ensure_dir(cut_dir)
+    ll_dir = output_dir / f"run{run}" / "lowlight" # Low-light analysis dir
+    ensure_dir(hist_dir); ensure_dir(cut_dir); ensure_dir(ll_dir)
+    
     plot_histogram([df_all['triggerBits'].to_numpy()], ['triggerBits'],
                    np.arange(0, 36), hist_dir / f"{run}_triggerBits.png",
                    'Trigger Bits Distribution', 'triggerBits', logscale)
     plot_histogram([df_all['sum_area'], df_all.loc[df_all['triggerBits'] == 2, 'sum_area']],
                    ['All', 'Trig=2'], np.linspace(0, 100000, bins + 1),
                    hist_dir / f"{run}_sum_area.png", 'Sum Area Comparison', 'ADC', logscale)
+
+    # Low-light (triggerbit=16) analysis
+    ll_events = df_all[df_all['triggerBits'] == 16]
+    low_light_area_data = np.array(ll_events['area_array'].tolist())[:, :12] if not ll_events.empty else np.array([])
+    if low_light_area_data.size > 0:
+        fit_and_plot_low_light(low_light_area_data, ll_dir, f'Run{run}', hist_range=low_light_fit_range)
+    else:
+        print(f"No low-light events found for run {run}. Skipping low-light analysis.")
+    
     events = compute_delta_t(df_all, muon_bits=32, veto_bits=2, mult_thresh=multiplicity_cut)
-    return save_cut_histograms(
+    
+    cut_results = save_cut_histograms(
         events, delta_t_cut, area_cut, bins, cut_dir,
         f"Run {run}", time_std_cut, logscale
     )
+    if cut_results:
+        dt_vals, sa_vals = cut_results
+        return dt_vals, sa_vals, low_light_area_data
+    else:
+        return None, None, low_light_area_data
 
 
 def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
@@ -260,7 +370,7 @@ def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_delta_t.png'); plt.close()
         save_pickle({'centers': dt_centers, 'hist': hist_dt, 'errors': dt_err, 'tau': tau},
-                    output_dir / 'aggregated_delta_t.pkl')
+                     output_dir / 'aggregated_delta_t.pkl')
     all_sa = np.concatenate(aggregated['sum_area_cut']) if aggregated['sum_area_cut'] else np.array([])
     if all_sa.size:
         sa_min, sa_max = area_cut
@@ -274,7 +384,7 @@ def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_sum_area.png'); plt.close()
         save_pickle({'centers': sa_centers, 'hist': hist_sa, 'errors': sa_err},
-                    output_dir / 'aggregated_sum_area.pkl')
+                     output_dir / 'aggregated_sum_area.pkl')
 
 
 def main():
@@ -288,13 +398,15 @@ def main():
     start_run, end_run = map(int, sys.argv[1:])
 
     # --- Configuration Parameters ---
-    delta_t_cut      = (0, 20000)    # Δt range in ns
-    area_cut         = (0, 100000)   # Total charge (ADC) range
-    bins             = 20            # Bins for cut histograms
-    multiplicity_adc = 2*100         # ADC threshold per channel
-    multiplicity_cut = 2             # Min channels above threshold
-    time_std_cut     = 2.5*16        # Max std of channel times in ns, 1 ADC = 16 ns
-    logscale         = True          # Use log scale for y-axes
+    delta_t_cut         = (0, 20000)      # Δt range in ns
+    area_cut            = (0, 30000)     # Total charge (ADC) range
+    bins                = 100              # Bins for cut histograms
+    multiplicity_adc    = 2*100           # ADC threshold per channel
+    multiplicity_cut    = 2               # Min channels above threshold
+    time_std_cut        = 5*16          # Max std of channel times in ns
+    logscale            = True            # Use log scale for y-axes
+    tau_fit_window      = (2500, 10000)   # Fit window for τ in ns
+    low_light_fit_range = (-50, 400)      # Fit window for low-light analysis in ADC
     # --------------------------------
     dt_min, dt_max = delta_t_cut
     sa_min, sa_max = area_cut
@@ -306,6 +418,8 @@ def main():
     print(f"Multiplicity ADC threshold: {multiplicity_adc}")
     print(f"Multiplicity cut: {multiplicity_cut}")
     print(f"Time-std cut: < {time_std_cut} ns")
+    print(f"τ fit window: {tau_fit_window} ns")
+    print(f"Low-light fit range: {low_light_fit_range} ADC")
     print(f"Logscale: {logscale}")
     print("======================")
 
@@ -318,7 +432,8 @@ def main():
 
     aggregated = {
         'delta_t': [],
-        'sum_area_cut': []
+        'sum_area_cut': [],
+        'low_light_areas': [] # New aggregation list
     }
 
     for run in range(start_run, end_run + 1):
@@ -332,12 +447,17 @@ def main():
             multiplicity_adc,
             multiplicity_cut,
             time_std_cut,
-            logscale
+            logscale,
+            low_light_fit_range # Pass parameter
         )
         if result:
-            dt_vals, sa_vals = result
-            aggregated['delta_t'].append(dt_vals)
-            aggregated['sum_area_cut'].append(sa_vals)
+            dt_vals, sa_vals, ll_areas = result
+            if dt_vals is not None:
+                aggregated['delta_t'].append(dt_vals)
+            if sa_vals is not None:
+                aggregated['sum_area_cut'].append(sa_vals)
+            if ll_areas.size > 0:
+                aggregated['low_light_areas'].append(ll_areas)
 
     # Delegate aggregation to separate function
     aggregate_plots(
@@ -345,10 +465,17 @@ def main():
         delta_t_cut,
         area_cut,
         bins,
-        (2500, 10000),  # fit window
+        tau_fit_window,  # Use parameter
         output_dir,
         logscale
     )
+
+    # Perform aggregated low-light analysis
+    if aggregated['low_light_areas']:
+        print("Performing aggregated low-light analysis...")
+        all_ll_areas = np.concatenate(aggregated['low_light_areas'], axis=0)
+        print('plotting aggregated low-light fits...')
+        fit_and_plot_low_light(all_ll_areas, output_dir, 'Aggregated', hist_range=low_light_fit_range)
 
 if __name__ == '__main__':
     main()
