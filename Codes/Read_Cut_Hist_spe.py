@@ -123,7 +123,7 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
         bins: Number of bins for histograms.
         save_dir: Directory to store output files.
         run_label: Text label (e.g., 'Run 123') for legends.
-        time_std_cut: Maximum allowed standard deviation of channels 0-11 in ns.
+        time_std_cut: Maximum allowed standard deviation of channel times in ns.
         logscale: Whether to use logarithmic y-axis.
 
     Returns:
@@ -140,7 +140,14 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
     print(f"{run_label}: after Δt cut: {len(sel)} events")
     sel = sel[(sel['sum_area'] >= s_min) & (sel['sum_area'] <= s_max)]
     print(f"{run_label}: after sum_area cut: {len(sel)} events")
-    std_vals = np.array([np.std(arr[:12]) for arr in sel['time_array']])
+    
+    # MODIFIED: Calculate std dev for each event using only channels that passed the mult_adc cut.
+    # The pre-applied multiplicity cut ensures there are enough channels (>2) to calculate std.
+    std_vals = np.array([
+        np.std(np.array(row['time_array'])[row['channel_postmcut']])
+        for index, row in sel.iterrows()
+    ])
+    
     sel = sel[std_vals < time_std_cut]
     print(f"{run_label}: after time-std < {time_std_cut} ns cut: {len(sel)} events")
     if sel.empty:
@@ -212,8 +219,8 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
 
         # Initial guesses for the fit
         p0 = [
-            counts.max(), 0, 20,              # A0, mu0, sig0 (pedestal)
-            counts.max()/5, 100, 30,         # A1, mu1, sig1 (1PE)
+            counts.max(), 0, 20,          # A0, mu0, sig0 (pedestal)
+            counts.max()/5, 100, 30,       # A1, mu1, sig1 (1PE)
             counts.max()/25, counts.max()/125  # A2 (2PE), A3 (3PE)
         ]
         try:
@@ -251,8 +258,8 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
     ensure_dir(output_dir)
     plt.savefig(output_dir / f'{file_label}_low_light_fits.png')
     print(f"Low-light fits saved to {output_dir / f'{file_label}_low_light_fits.png'}")
-    save_pickle({'params': popt, 'errors': perr}, output_dir / f'{file_label}_low_light_fit_params.pkl')
-    print(f"Low-light fit parameters saved to {output_dir / f'{file_label}_low_light_fit_params.pkl'}")
+    # save_pickle({'params': popt, 'errors': perr}, output_dir / f'{file_label}_low_light_fit_params.pkl')
+    # print(f"Low-light fit parameters saved to {output_dir / f'{file_label}_low_light_fit_params.pkl'}")
     plt.close()
 
 
@@ -287,14 +294,20 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
         ['eventID', 'nsTime', 'triggerBits', 'area', 'pulseH'], library='ak', step_size='100 MB'):
         areas = ak.to_numpy(chunk['area'])
         times_ch = ak.to_numpy(chunk['pulseH'])
+        
+        # MODIFIED: Define areas for first 12 channels and get list of channels passing ADC cut
+        areas_12ch = areas[:, :12]
+        channel_postmcut = [np.where(row > mult_adc)[0].tolist() for row in areas_12ch]
+        
         df = pd.DataFrame({
             'eventID': ak.to_numpy(chunk['eventID']),
             'nsTime': ak.to_numpy(chunk['nsTime']),
             'triggerBits': ak.to_numpy(chunk['triggerBits']),
-            'sum_area': np.sum(areas[:, :12], axis=1),
-            'multiplicity': np.sum(areas[:, :12] > mult_adc, axis=1),
+            'sum_area': np.sum(areas_12ch, axis=1),
+            'multiplicity': np.sum(areas_12ch > mult_adc, axis=1),
             'time_array': list(times_ch),
-            'area_array': list(areas)  # Store full area array
+            'area_array': list(areas),
+            'channel_postmcut': channel_postmcut  # ADDED: Store the list of channels
         })
         dfs.append(df)
     if not dfs:
@@ -370,7 +383,7 @@ def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_delta_t.png'); plt.close()
         save_pickle({'centers': dt_centers, 'hist': hist_dt, 'errors': dt_err, 'tau': tau},
-                     output_dir / 'aggregated_delta_t.pkl')
+                      output_dir / 'aggregated_delta_t.pkl')
     all_sa = np.concatenate(aggregated['sum_area_cut']) if aggregated['sum_area_cut'] else np.array([])
     if all_sa.size:
         sa_min, sa_max = area_cut
@@ -384,7 +397,7 @@ def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_sum_area.png'); plt.close()
         save_pickle({'centers': sa_centers, 'hist': hist_sa, 'errors': sa_err},
-                     output_dir / 'aggregated_sum_area.pkl')
+                      output_dir / 'aggregated_sum_area.pkl')
 
 
 def main():
@@ -398,14 +411,14 @@ def main():
     start_run, end_run = map(int, sys.argv[1:])
 
     # --- Configuration Parameters ---
-    delta_t_cut         = (0, 20000)      # Δt range in ns
-    area_cut            = (0, 30000)     # Total charge (ADC) range
-    bins                = 100              # Bins for cut histograms
-    multiplicity_adc    = 2*100           # ADC threshold per channel
-    multiplicity_cut    = 2               # Min channels above threshold
-    time_std_cut        = 5*16          # Max std of channel times in ns
-    logscale            = True            # Use log scale for y-axes
-    tau_fit_window      = (2500, 10000)   # Fit window for τ in ns
+    delta_t_cut        = (0, 20000)      # Δt range in ns
+    area_cut           = (0, 30000)      # Total charge (ADC) range
+    bins               = 100             # Bins for cut histograms
+    multiplicity_adc   = 2*100           # ADC threshold per channel
+    multiplicity_cut   = 2               # Min channels above threshold
+    time_std_cut       = 5*16            # Max std of channel times in ns
+    logscale           = True            # Use log scale for y-axes
+    tau_fit_window     = (2500, 10000)   # Fit window for τ in ns
     low_light_fit_range = (-50, 400)      # Fit window for low-light analysis in ADC
     # --------------------------------
     dt_min, dt_max = delta_t_cut
