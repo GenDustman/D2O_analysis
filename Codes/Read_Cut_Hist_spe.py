@@ -4,6 +4,15 @@ Refactored script for processing ROOT files with detailed configuration
 and an additional per-event time-std cut. Modular functions handle I/O,
 histogram plotting, Δt computation, and aggregated τ fitting.
 Includes low-light (triggerbit=16) analysis with multi-Gaussian fitting.
+
+PERFORMANCE OPTIMIZATIONS:
+- Replaced slow pandas row-by-row iteration (iterrows) with vectorized 
+  operations using the Awkward Array library for a significant speedup.
+- Per-event calculations (like time standard deviation) are now performed 
+  efficiently on entire data chunks before being loaded into pandas.
+- Increased the Uproot iteration step size to reduce chunking overhead.
+- Cleaned up DataFrame creation to avoid storing large, unnecessary list-like
+  objects in columns.
 """
 import sys
 from pathlib import Path
@@ -87,6 +96,7 @@ def plot_histogram(arrays, labels, bins, img_path, title, xlabel,
 def compute_delta_t(df, muon_bits, veto_bits, mult_thresh):
     """
     Compute time differences Δt between veto events and the preceding muon event.
+    This function is already efficient and does not require changes.
 
     Args:
         df: DataFrame containing 'nsTime' and 'triggerBits'.
@@ -113,11 +123,11 @@ def compute_delta_t(df, muon_bits, veto_bits, mult_thresh):
 def save_cut_histograms(events, delta_t_range, area_range, bins,
                         save_dir, run_label, time_std_cut, logscale=True):
     """
-    Apply sequential cuts on Δt, sum_area, and per-event time-std, then
+    Apply sequential cuts on Δt, sum_area, and pre-calculated time-std, then
     save errorbar histograms of Δt and sum_area and pickle their data.
 
     Args:
-        events: DataFrame from compute_delta_t with 'delta_t' and 'sum_area'.
+        events: DataFrame from compute_delta_t with 'delta_t', 'sum_area', and 'time_std'.
         delta_t_range: Tuple (min_ns, max_ns) for Δt cut.
         area_range: Tuple (min_ADC, max_ADC) for sum_area cut.
         bins: Number of bins for histograms.
@@ -141,15 +151,13 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
     sel = sel[(sel['sum_area'] >= s_min) & (sel['sum_area'] <= s_max)]
     print(f"{run_label}: after sum_area cut: {len(sel)} events")
     
-    # MODIFIED: Calculate std dev for each event using only channels that passed the mult_adc cut.
-    # The pre-applied multiplicity cut ensures there are enough channels (>2) to calculate std.
-    std_vals = np.array([
-        np.std(np.array(row['time_array'])[row['channel_postmcut']])
-        for index, row in sel.iterrows()
-    ])
-    
-    sel = sel[std_vals < time_std_cut]
+    # OPTIMIZED: The slow, row-by-row standard deviation calculation has been removed.
+    # The 'time_std' was pre-calculated efficiently in `process_run`.
+    # We now apply a simple and fast boolean cut on the existing column.
+    sel = sel.dropna(subset=['time_std'])
+    sel = sel[sel['time_std'] < time_std_cut]
     print(f"{run_label}: after time-std < {time_std_cut} ns cut: {len(sel)} events")
+
     if sel.empty:
         return None, None
     dt_bins = np.linspace(dt_min, dt_max, bins+1)
@@ -258,15 +266,14 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
     ensure_dir(output_dir)
     plt.savefig(output_dir / f'{file_label}_low_light_fits.png')
     print(f"Low-light fits saved to {output_dir / f'{file_label}_low_light_fits.png'}")
-    # save_pickle({'params': popt, 'errors': perr}, output_dir / f'{file_label}_low_light_fit_params.pkl')
-    # print(f"Low-light fit parameters saved to {output_dir / f'{file_label}_low_light_fit_params.pkl'}")
     plt.close()
 
 
 def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
                 mult_adc, multiplicity_cut, time_std_cut, logscale, low_light_fit_range):
     """
-    Process a single run: read data, make histograms, apply cuts.
+    Process a single run: read data, perform vectorized calculations,
+    make histograms, and apply cuts.
 
     Args:
         run: Integer run number.
@@ -289,34 +296,61 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
     if not infile.exists():
         print(f"Missing file: {infile}")
         return None
+    
     dfs = []
+    branches = ['eventID', 'nsTime', 'triggerBits', 'area', 'peakPosition']
+    # OPTIMIZED: Increased step_size to reduce the number of chunks and the
+    # overhead from pd.concat.
     for chunk in uproot.open(infile)['tree'].iterate(
-        ['eventID', 'nsTime', 'triggerBits', 'area', 'pulseH'], library='ak', step_size='200 MB'):
-        areas = ak.to_numpy(chunk['area'])
-        times_ch = ak.to_numpy(chunk['pulseH'])
+        branches, library='ak', step_size='500 MB'):
         
-        # MODIFIED: Define areas for first 12 channels and get list of channels passing ADC cut
-        areas_12ch = areas[:, :12]
-        channel_postmcut = [np.where(row > mult_adc)[0].tolist() for row in areas_12ch]
-        
+        # --- OPTIMIZED: Vectorized Calculations with Awkward Array ---
+        areas_ak = chunk['area']
+        times_ak = chunk['peakPosition']
+
+        # Work with the first 12 channels for main analysis
+        areas_12ch_ak = areas_ak[:, :12]
+        times_12ch_ak = times_ak[:, :12]
+
+        # Create a boolean mask for channels passing the ADC cut
+        postmcut_mask = areas_12ch_ak > mult_adc
+
+        # --- FIX: Use ak.mask to prevent array flattening and correctly calculate std ---
+        # The original boolean array indexing (array[mask]) could flatten the data
+        # if a chunk from the ROOT file contained only events with the same number
+        # of channels (making it a "regular" array). This flattening caused
+        # ak.std(..., axis=1) to fail with a ValueError.
+        #
+        # The fix is to use ak.mask, which preserves the jagged structure by
+        # replacing values that do not satisfy the mask with `None`. The subsequent
+        # ak.std call correctly ignores these `None` values.
+        masked_times = ak.mask(times_12ch_ak, postmcut_mask)
+
+        # Calculate the standard deviation along axis=1 (per-event).
+        # ak.std handles events with 0 or 1 valid hits correctly, returning None or 0.0.
+        time_std = ak.std(masked_times, axis=1)
+
+        # --- Create a clean Pandas DataFrame ---
         df = pd.DataFrame({
             'eventID': ak.to_numpy(chunk['eventID']),
             'nsTime': ak.to_numpy(chunk['nsTime']),
             'triggerBits': ak.to_numpy(chunk['triggerBits']),
-            'sum_area': np.sum(areas_12ch, axis=1),
-            'multiplicity': np.sum(areas_12ch > mult_adc, axis=1),
-            'time_array': list(times_ch),
-            'area_array': list(areas),
-            'channel_postmcut': channel_postmcut  # ADDED: Store the list of channels
+            'sum_area': ak.to_numpy(ak.sum(areas_12ch_ak, axis=1)),
+            'multiplicity': ak.to_numpy(ak.sum(postmcut_mask, axis=1)),
+            'time_std': ak.to_numpy(time_std),
+            # Keep 'area_array' for the low-light analysis, converting to list
+            'area_array': ak.to_list(areas_ak),
         })
         dfs.append(df)
+        
     if not dfs:
         return None
     df_all = pd.concat(dfs, ignore_index=True)
     df_all.to_pickle(output_dir / f"run{run}_data.pkl")
+    
     hist_dir = output_dir / f"run{run}" / "histograms"
     cut_dir = output_dir / f"run{run}" / "cuthist"
-    ll_dir = output_dir / f"run{run}" / "lowlight" # Low-light analysis dir
+    ll_dir = output_dir / f"run{run}" / "lowlight"
     ensure_dir(hist_dir); ensure_dir(cut_dir); ensure_dir(ll_dir)
     
     plot_histogram([df_all['triggerBits'].to_numpy()], ['triggerBits'],
@@ -348,9 +382,10 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
 
 
 def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
-                    fit_window, output_dir, logscale):
+                    fit_window, output_dir, logscale_dt, logscale_sa,
+                    perform_fit=True):
     """
-    Generate aggregated Δt and sum_area histograms with τ fit.
+    Generate aggregated Δt and sum_area histograms, with an option for a τ fit.
 
     Args:
         aggregated: Dict with 'delta_t' and 'sum_area_cut' lists.
@@ -359,31 +394,55 @@ def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
         bins: Bin count.
         fit_window: (t_low, t_high) ns for fitting τ.
         output_dir: Directory for aggregated outputs.
-        logscale: Use log y-axis.
+        logscale_dt: Use log y-axis for the Δt plot.
+        logscale_sa: Use log y-axis for the sum_area plot.
+        perform_fit: If True, perform and plot an exponential fit on the Δt data.
     """
     ensure_dir(output_dir)
     dt_min, dt_max = delta_t_cut
     all_dt = np.concatenate(aggregated['delta_t']) if aggregated['delta_t'] else np.array([])
+    
     if all_dt.size:
         dt_bins = np.linspace(dt_min, dt_max, bins + 1)
         hist_dt, dt_edges = np.histogram(all_dt, bins=dt_bins)
         dt_centers = 0.5 * (dt_edges[:-1] + dt_edges[1:])
         dt_err = np.sqrt(hist_dt)
-        t_low, t_high = fit_window
-        mask = (dt_centers >= t_low) & (dt_centers <= t_high) & (hist_dt > 0)
-        fit_x = dt_centers[mask]; fit_y = np.log(hist_dt[mask])
-        (slope, intercept), cov = np.polyfit(fit_x, fit_y, 1, cov=True)
-        slope_err = np.sqrt(cov[0,0]); tau = -1.0 / slope; tau_err = slope_err / (slope**2)
-        fit_line = np.exp(intercept + slope * dt_centers)
+        
+        pickle_data = {'centers': dt_centers, 'hist': hist_dt, 'errors': dt_err}
+        
         plt.errorbar(dt_centers, hist_dt, yerr=dt_err, fmt='o', label='Data')
-        plt.plot(dt_centers, fit_line, '--', label=f'Fit τ={tau:.1f}±{tau_err:.1f} ns')
-        plt.axvspan(t_low, t_high, color='gray', alpha=0.2, label='Fit Range')
+        
+        if perform_fit:
+            t_low, t_high = fit_window
+            mask = (dt_centers >= t_low) & (dt_centers <= t_high) & (hist_dt > 0)
+            
+            if np.any(mask):
+                fit_x = dt_centers[mask]
+                fit_y = np.log(hist_dt[mask])
+                
+                try:
+                    (slope, intercept), cov = np.polyfit(fit_x, fit_y, 1, w=np.sqrt(hist_dt[mask]), cov=True)
+                    slope_err = np.sqrt(cov[0, 0])
+                    tau = -1.0 / slope
+                    tau_err = slope_err / (slope**2)
+                    fit_line = np.exp(intercept + slope * dt_centers)
+                    
+                    plt.plot(dt_centers, fit_line, '--', label=f'Fit τ={tau:.1f}±{tau_err:.1f} ns')
+                    plt.axvspan(t_low, t_high, color='gray', alpha=0.2, label='Fit Range')
+                    
+                    pickle_data['tau'] = tau
+                    pickle_data['tau_err'] = tau_err
+                except (np.linalg.LinAlgError, ValueError) as e:
+                    print(f"Warning: Could not perform the fit. Error: {e}")
+            else:
+                print("Warning: No data in the specified fit window. Skipping the fit.")
+
         plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title(f'Aggregated Δt')
-        if logscale: plt.yscale('log')
+        if logscale_dt: plt.yscale('log')
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_delta_t.png'); plt.close()
-        save_pickle({'centers': dt_centers, 'hist': hist_dt, 'errors': dt_err, 'tau': tau},
-                      output_dir / 'aggregated_delta_t.pkl')
+        save_pickle(pickle_data, output_dir / 'aggregated_delta_t.pkl')
+
     all_sa = np.concatenate(aggregated['sum_area_cut']) if aggregated['sum_area_cut'] else np.array([])
     if all_sa.size:
         sa_min, sa_max = area_cut
@@ -393,11 +452,11 @@ def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
         sa_err = np.sqrt(hist_sa)
         plt.errorbar(sa_centers, hist_sa, yerr=sa_err, fmt='o', label=f'Runs')
         plt.xlabel('Total Charge (ADC)'); plt.ylabel('Counts'); plt.title(f'Aggregated Total Charge')
-        if logscale: plt.yscale('log')
+        if logscale_sa: plt.yscale('log')
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_sum_area.png'); plt.close()
         save_pickle({'centers': sa_centers, 'hist': hist_sa, 'errors': sa_err},
-                      output_dir / 'aggregated_sum_area.pkl')
+                    output_dir / 'aggregated_sum_area.pkl')
 
 
 def main():
@@ -411,14 +470,17 @@ def main():
     start_run, end_run = map(int, sys.argv[1:])
 
     # --- Configuration Parameters ---
-    delta_t_cut        = (0, 20000)      # Δt range in ns
-    area_cut           = (0, 30000)      # Total charge (ADC) range
-    bins               = 100             # Bins for cut histograms
-    multiplicity_adc   = 3*100           # ADC threshold per channel
-    multiplicity_cut   = 3               # Min channels above threshold
-    time_std_cut       = 10*16            # Max std of channel times in ns
-    logscale           = True            # Use log scale for y-axes
-    tau_fit_window     = (2500, 10000)   # Fit window for τ in ns
+    delta_t_cut         = (0, 10000)      # Δt range in ns
+    area_cut            = (0, 50000)      # Total charge (ADC) range
+    bins                = 20             # Bins for cut histograms
+    multiplicity_adc    = 2*100           # ADC threshold per channel
+    multiplicity_cut    = 2               # Min channels above threshold
+    time_std_cut        = 2.5*16          # Max std of channel times in ns
+    logscale            = True            # Use log scale for y-axes
+    logscale_dt         = True            # Use log scale for Δt histogram
+    logscale_sa         = False           # Use log scale for sum_area histogram
+    do_tau_fit          = False            # Whether to perform exponential fit on Δt
+    tau_fit_window      = (2500, 10000)   # Fit window for τ in ns
     low_light_fit_range = (-50, 400)      # Fit window for low-light analysis in ADC
     # --------------------------------
     dt_min, dt_max = delta_t_cut
@@ -431,7 +493,9 @@ def main():
     print(f"Multiplicity ADC threshold: {multiplicity_adc}")
     print(f"Multiplicity cut: {multiplicity_cut}")
     print(f"Time-std cut: < {time_std_cut} ns")
-    print(f"τ fit window: {tau_fit_window} ns")
+    print(f"Perform τ fit: {do_tau_fit}")
+    if do_tau_fit:
+        print(f"τ fit window: {tau_fit_window} ns")
     print(f"Low-light fit range: {low_light_fit_range} ADC")
     print(f"Logscale: {logscale}")
     print("======================")
@@ -439,14 +503,14 @@ def main():
     data_dir = Path('/raid1/genli/Data_D2O')
     output_dir = data_dir / (
         f"runs_{start_run}_{end_run}_dt{dt_min}-{dt_max}"
-        f"_sa{sa_min}-{sa_max}_mcut{multiplicity_cut}_std{time_std_cut}"
+        f"_sa{sa_min}-{sa_max}_madc{multiplicity_adc}_mcut{multiplicity_cut}_std{time_std_cut}"
     )
     ensure_dir(output_dir)
 
     aggregated = {
         'delta_t': [],
         'sum_area_cut': [],
-        'low_light_areas': [] # New aggregation list
+        'low_light_areas': []
     }
 
     for run in range(start_run, end_run + 1):
@@ -461,7 +525,7 @@ def main():
             multiplicity_cut,
             time_std_cut,
             logscale,
-            low_light_fit_range # Pass parameter
+            low_light_fit_range
         )
         if result:
             dt_vals, sa_vals, ll_areas = result
@@ -472,18 +536,18 @@ def main():
             if ll_areas.size > 0:
                 aggregated['low_light_areas'].append(ll_areas)
 
-    # Delegate aggregation to separate function
     aggregate_plots(
         aggregated,
         delta_t_cut,
         area_cut,
         bins,
-        tau_fit_window,  # Use parameter
+        tau_fit_window,
         output_dir,
-        logscale
+        logscale_dt,
+        logscale_sa,
+        perform_fit=do_tau_fit
     )
 
-    # Perform aggregated low-light analysis
     if aggregated['low_light_areas']:
         print("Performing aggregated low-light analysis...")
         all_ll_areas = np.concatenate(aggregated['low_light_areas'], axis=0)
