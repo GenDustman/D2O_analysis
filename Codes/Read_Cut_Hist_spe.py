@@ -4,7 +4,7 @@ Refactored script for processing ROOT files with detailed configuration
 and an additional per-event time-std cut. Modular functions handle I/O,
 histogram plotting, Δt computation, and aggregated τ fitting.
 Includes low-light (triggerbit=16) analysis with multi-Gaussian fitting
-and new 3x3 correlation maps for key variables.
+and new 3x3 correlation maps for key variables with correlation coefficients.
 
 PERFORMANCE OPTIMIZATIONS:
 - Replaced slow pandas row-by-row iteration (iterrows) with vectorized
@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 from matplotlib.colors import LogNorm
 from scipy.optimize import curve_fit
+from scipy.stats import pearsonr
 import uproot
 import awkward as ak
 
@@ -98,7 +99,8 @@ def plot_histogram(arrays, labels, bins, img_path, title, xlabel,
 def plot_correlation_maps(df, output_dir, label):
     """
     Plots a 3x3 grid of correlation maps for delta_t, sum_area, and multiplicity.
-    Diagonal plots are 1D histograms. Off-diagonal are 2D histograms.
+    Diagonal plots are 1D histograms. Off-diagonal are 2D histograms with the
+    Pearson correlation coefficient displayed.
 
     Args:
         df: DataFrame with 'delta_t', 'sum_area', and 'multiplicity' columns.
@@ -138,13 +140,19 @@ def plot_correlation_maps(df, output_dir, label):
             # Off-diagonal plots: 2D histograms
             else:
                 subset = df[[var_x, var_y]].dropna()
-                if not subset.empty:
-                    # Use LogNorm for better visibility of sparse data
+                # Pearson correlation requires at least 2 data points
+                if not subset.empty and len(subset) > 1:
                     h = ax.hist2d(subset[var_x], subset[var_y],
                                   bins=50, cmap='viridis', norm=LogNorm())
-                    # Only add a colorbar if there's data to show
                     if h[0].max() > 0:
                         fig.colorbar(h[3], ax=ax)
+
+                    # --- Calculate and display Pearson correlation ---
+                    corr, _ = pearsonr(subset[var_x], subset[var_y])
+                    corr_text = f'Corr: {corr:.2f}'
+                    ax.text(0.05, 0.95, corr_text, transform=ax.transAxes, fontsize=12,
+                            verticalalignment='top',
+                            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
                 else:
                     ax.text(0.5, 0.5, 'No Data', ha='center', va='center', transform=ax.transAxes)
 
@@ -155,7 +163,6 @@ def plot_correlation_maps(df, output_dir, label):
                 ax.tick_params(axis='y', labelleft=False)
 
     plt.tight_layout(rect=[0, 0, 1, 0.96])
-    # Create a filesystem-friendly name for the output file
     filename_label = label.replace(" ", "_").replace(":", "")
     save_path = output_dir / f'{filename_label}_correlation_map.png'
     plt.savefig(save_path)
@@ -226,7 +233,7 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
     sel = sel[sel['time_std'] < time_std_cut]
     print(f"{run_label}: after time-std < {time_std_cut} ns cut: {len(sel)} events")
 
-    # --- NEW: Plot correlation maps for the single run after all cuts ---
+    # Plot correlation maps for the single run after all cuts
     plot_correlation_maps(sel, save_dir, run_label)
 
     if sel.empty:
@@ -524,13 +531,13 @@ def main():
     delta_t_cut         = (0, 10000)      # Δt range in ns
     area_cut            = (0, 50000)      # Total charge (ADC) range
     bins                = 20              # Bins for cut histograms
-    multiplicity_adc    = 2 * 100         # ADC threshold per channel
+    multiplicity_adc    = 5 * 100         # ADC threshold per channel
     multiplicity_cut    = 2               # Min channels above threshold
     time_std_cut        = 2.5 * 16        # Max std of channel times in ns
     logscale            = True            # Use log scale for y-axes
     logscale_dt         = True            # Use log scale for Δt histogram
     logscale_sa         = False           # Use log scale for sum_area histogram
-    do_tau_fit          = False           # Whether to perform exponential fit on Δt
+    do_tau_fit          = True           # Whether to perform exponential fit on Δt
     tau_fit_window      = (2500, 10000)   # Fit window for τ in ns
     low_light_fit_range = (-50, 400)      # Fit window for low-light analysis in ADC
     # --------------------------------
@@ -602,7 +609,7 @@ def main():
         perform_fit=do_tau_fit
     )
 
-    # --- NEW: Generate and save the aggregated correlation map ---
+    # Generate and save the aggregated correlation map
     if aggregated['delta_t']:  # Check if there is any data to plot
         print("Generating aggregated correlation map...")
         agg_df = pd.DataFrame({
