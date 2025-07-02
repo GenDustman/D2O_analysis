@@ -6,14 +6,13 @@ histogram plotting, Δt computation, and aggregated τ fitting.
 Includes low-light (triggerbit=16) analysis with multi-Gaussian fitting
 and new 3x3 correlation maps for key variables with correlation coefficients.
 
-PERFORMANCE OPTIMIZATIONS:
-- Replaced slow pandas row-by-row iteration (iterrows) with vectorized
-  operations using the Awkward Array library for a significant speedup.
-- Per-event calculations (like time standard deviation) are now performed
-  efficiently on entire data chunks before being loaded into pandas.
-- Increased the Uproot iteration step size to reduce chunking overhead.
-- Cleaned up DataFrame creation to avoid storing large, unnecessary list-like
-  objects in columns.
+MODIFICATION:
+- Changed analysis from total charge (ADC) to total photoelectrons (P.E.).
+- The conversion is done by dividing each channel's area by its fitted single
+  photoelectron mean (mu1) from low-light data.
+- Error propagation for the P.E. histograms now correctly includes the
+  uncertainty from the mu1 parameter fit, combined in quadrature with the
+  Poisson error of the bin counts.
 """
 import sys
 from pathlib import Path
@@ -98,12 +97,12 @@ def plot_histogram(arrays, labels, bins, img_path, title, xlabel,
 
 def plot_correlation_maps(df, output_dir, label):
     """
-    Plots a 3x3 grid of correlation maps for delta_t, sum_area, and multiplicity.
+    Plots a 3x3 grid of correlation maps for delta_t, total_pe, and multiplicity.
     Diagonal plots are 1D histograms. Off-diagonal are 2D histograms with the
     Pearson correlation coefficient displayed.
 
     Args:
-        df: DataFrame with 'delta_t', 'sum_area', and 'multiplicity' columns.
+        df: DataFrame with 'delta_t', 'total_pe', and 'multiplicity' columns.
         output_dir: Directory to save the plot.
         label: Label for the plot title (e.g., 'Run 123' or 'Aggregated').
     """
@@ -112,8 +111,8 @@ def plot_correlation_maps(df, output_dir, label):
         print(f"DataFrame is empty for {label}. Skipping correlation map.")
         return
 
-    variables = ['delta_t', 'sum_area', 'multiplicity']
-    pretty_labels = ['Δt (ns)', 'Total Charge (ADC)', 'Multiplicity']
+    variables = ['delta_t', 'total_pe', 'multiplicity']
+    pretty_labels = ['Δt (ns)', 'Total Photoelectrons', 'Multiplicity']
 
     fig, axes = plt.subplots(3, 3, figsize=(15, 15))
     fig.suptitle(f'Correlation Matrix ({label})', fontsize=18)
@@ -197,17 +196,17 @@ def compute_delta_t(df, muon_bits, veto_bits, mult_thresh):
     return events
 
 
-def save_cut_histograms(events, delta_t_range, area_range, bins,
+def save_cut_histograms(events, delta_t_range, pe_range, bins,
                         save_dir, run_label, time_std_cut, logscale=True):
     """
-    Apply sequential cuts on Δt, sum_area, and pre-calculated time-std, then
-    save errorbar histograms of Δt and sum_area and pickle their data.
+    Apply sequential cuts on Δt, total_pe, and pre-calculated time-std, then
+    save errorbar histograms of Δt and total_pe and pickle their data.
     Also generates and saves a 3x3 correlation map of the final cut data.
 
     Args:
-        events: DataFrame from compute_delta_t with 'delta_t', 'sum_area', and 'time_std'.
+        events: DataFrame with 'delta_t', 'total_pe', 'total_pe_err', and 'time_std'.
         delta_t_range: Tuple (min_ns, max_ns) for Δt cut.
-        area_range: Tuple (min_ADC, max_ADC) for sum_area cut.
+        pe_range: Tuple (min_pe, max_pe) for total_pe cut.
         bins: Number of bins for histograms.
         save_dir: Directory to store output files.
         run_label: Text label (e.g., 'Run 123') for legends.
@@ -215,19 +214,19 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
         logscale: Whether to use logarithmic y-axis.
 
     Returns:
-        Tuple of numpy arrays (delta_t_vals, sum_area_vals, multiplicity_vals)
-        after all cuts, or (None, None, None) if no events survive.
+        Tuple of numpy arrays (delta_t_vals, total_pe_vals, multiplicity_vals, total_pe_err_vals)
+        after all cuts, or (None, None, None, None) if no events survive.
     """
     dt_min, dt_max = delta_t_range
-    s_min, s_max = area_range
+    pe_min, pe_max = pe_range
 
     ensure_dir(save_dir)
-    sel = events.dropna(subset=['delta_t']).copy()
-    print(f"{run_label}: after Δt NaN drop: {len(sel)} events")
+    sel = events.dropna(subset=['delta_t', 'total_pe']).copy()
+    print(f"{run_label}: after NaN drop: {len(sel)} events")
     sel = sel[(sel['delta_t'] >= dt_min) & (sel['delta_t'] <= dt_max)]
     print(f"{run_label}: after Δt cut: {len(sel)} events")
-    sel = sel[(sel['sum_area'] >= s_min) & (sel['sum_area'] <= s_max)]
-    print(f"{run_label}: after sum_area cut: {len(sel)} events")
+    sel = sel[(sel['total_pe'] >= pe_min) & (sel['total_pe'] <= pe_max)]
+    print(f"{run_label}: after total_pe cut: {len(sel)} events")
 
     sel = sel.dropna(subset=['time_std'])
     sel = sel[sel['time_std'] < time_std_cut]
@@ -237,31 +236,40 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
     plot_correlation_maps(sel, save_dir, run_label)
 
     if sel.empty:
-        return None, None, None
+        return None, None, None, None
 
+    # --- Delta T Histogram ---
     dt_bins = np.linspace(dt_min, dt_max, bins + 1)
     dt_counts, dt_edges = np.histogram(sel['delta_t'], bins=dt_bins)
     dt_centers = 0.5 * (dt_edges[:-1] + dt_edges[1:])
-    dt_err = np.sqrt(dt_counts)
+    dt_err = np.sqrt(dt_counts) # Simple Poisson error
     save_pickle({'hist': dt_counts, 'centers': dt_centers, 'errors': dt_err},
-                  save_dir / 'delta_t_hist.pkl')
+                save_dir / 'delta_t_hist.pkl')
     plt.errorbar(dt_centers, dt_counts, yerr=dt_err, fmt='o', label=run_label)
     plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title('Δt Histogram')
     if logscale: plt.yscale('log')
     plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'delta_t_hist.png'); plt.close()
 
-    s_bins = np.linspace(s_min, s_max, bins + 1)
-    s_counts, s_edges = np.histogram(sel['sum_area'], bins=s_bins)
-    s_centers = 0.5 * (s_edges[:-1] + s_edges[1:])
-    s_err = np.sqrt(s_counts)
-    save_pickle({'hist': s_counts, 'centers': s_centers, 'errors': s_err},
-                  save_dir / 'sum_area_hist.pkl')
-    plt.errorbar(s_centers, s_counts, yerr=s_err, fmt='o', label=run_label)
-    plt.xlabel('Sum Area (ADC)'); plt.ylabel('Counts'); plt.title('Total Charge Histogram')
-    if logscale: plt.yscale('log')
-    plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'sum_area_hist.png'); plt.close()
+    # --- Total PE Histogram with Propagated Error ---
+    pe_bins = np.linspace(pe_min, pe_max, bins + 1)
+    pe_counts, pe_edges = np.histogram(sel['total_pe'], bins=pe_bins)
+    pe_centers = 0.5 * (pe_edges[:-1] + pe_edges[1:])
 
-    return sel['delta_t'].values, sel['sum_area'].values, sel['multiplicity'].values
+    # Calculate the propagated uncertainty from the gain fit for each bin
+    # This is the sum in quadrature of individual event uncertainties in that bin
+    gain_err_sq, _ = np.histogram(sel['total_pe'], bins=pe_bins, weights=sel['total_pe_err']**2)
+    
+    # Total error is the combination of Poisson counting error and gain error
+    total_err = np.sqrt(pe_counts + gain_err_sq)
+
+    save_pickle({'hist': pe_counts, 'centers': pe_centers, 'errors': total_err},
+                save_dir / 'total_pe_hist.pkl')
+    plt.errorbar(pe_centers, pe_counts, yerr=total_err, fmt='o', label=run_label)
+    plt.xlabel('Total Photoelectrons'); plt.ylabel('Counts'); plt.title('Total Photoelectron Histogram')
+    if logscale: plt.yscale('log')
+    plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'total_pe_hist.png'); plt.close()
+
+    return sel['delta_t'].values, sel['total_pe'].values, sel['multiplicity'].values, sel['total_pe_err'].values
 
 
 def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_bins=200):
@@ -274,10 +282,14 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
         file_label: String to include in the output filename (e.g., 'Run123' or 'Aggregated').
         hist_range: Tuple (min, max) for the area histogram range.
         hist_bins: Number of bins for the area histograms.
+
+    Returns:
+        Tuple of (mu1_values, mu1_errors), where each is a numpy array of shape (12,).
+        Returns NaNs for channels where the fit failed.
     """
     if area_data.size == 0:
         print(f"No low-light data to process for {file_label}.")
-        return
+        return np.full(12, np.nan), np.full(12, np.nan)
 
     def constrained_gaussians(x, a0, mu0, sig0, a1, mu1, sig1, a2, a3):
         """
@@ -298,6 +310,9 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
     fig, axes = plt.subplots(3, 4, figsize=(20, 15))
     fig.suptitle(f'Low-Light Channel Area Fits ({file_label})', fontsize=16)
     axes = axes.flatten()
+    
+    mu1_values = np.full(12, np.nan)
+    mu1_errors = np.full(12, np.nan)
 
     for i in range(12):
         ax = axes[i]
@@ -308,8 +323,8 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
 
         # Initial guesses for the fit
         p0 = [
-            counts.max(), 0, 20,          # A0, mu0, sig0 (pedestal)
-            counts.max()/5, 100, 30,      # A1, mu1, sig1 (1PE)
+            counts.max(), 0, 20,           # A0, mu0, sig0 (pedestal)
+            counts.max()/5, 100, 30,       # A1, mu1, sig1 (1PE)
             counts.max()/25, counts.max()/125  # A2 (2PE), A3 (3PE)
         ]
         try:
@@ -317,6 +332,10 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
             mask = counts > 0
             popt, pcov = curve_fit(constrained_gaussians, centers[mask], counts[mask], p0=p0, maxfev=10000)
             perr = np.sqrt(np.diag(pcov))
+
+            # Store the fitted mu1 and its error for this channel
+            mu1_values[i] = popt[4]
+            mu1_errors[i] = perr[4]
 
             fit_x = np.linspace(hist_range[0], hist_range[1], 500)
             ax.plot(fit_x, constrained_gaussians(fit_x, *popt), 'r-', label='Fit')
@@ -332,7 +351,7 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
                     verticalalignment='top', horizontalalignment='right',
                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
-        except RuntimeError:
+        except (RuntimeError, ValueError):
             ax.text(0.5, 0.5, 'Fit Failed', transform=ax.transAxes, color='red',
                     ha='center', va='center')
 
@@ -348,29 +367,64 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
     plt.savefig(output_dir / f'{file_label}_low_light_fits.png')
     print(f"Low-light fits saved to {output_dir / f'{file_label}_low_light_fits.png'}")
     plt.close()
+    
+    return mu1_values, mu1_errors
 
 
-def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
+def calculate_total_pe(df, mu1_values, mu1_errors):
+    """
+    Calculates the total photoelectrons and its uncertainty for each event.
+
+    Args:
+        df (pd.DataFrame): DataFrame containing an 'area_array' column.
+        mu1_values (np.ndarray): Array of shape (12,) with mu1 gain for each channel.
+        mu1_errors (np.ndarray): Array of shape (12,) with error on mu1 gain.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (total_pe, total_pe_err) for each event.
+    """
+    if np.all(np.isnan(mu1_values)):
+        print("ERROR: Low-light fit failed. Cannot calculate photoelectrons.")
+        nan_array = np.full(len(df), np.nan)
+        return nan_array, nan_array
+
+    # Replace NaN or non-positive values with infinity to make the division result in zero.
+    mu1_safe = np.where(np.isnan(mu1_values) | (mu1_values <= 0), np.inf, mu1_values)
+    mu1_err_safe = np.where(np.isnan(mu1_errors), 0, mu1_errors) # Treat NaN error as zero
+
+    if np.any(mu1_safe == np.inf):
+        nan_ch = np.where(np.isnan(mu1_values) | (mu1_values <= 0))[0]
+        print(f"Warning: mu1 fit failed/invalid for channels {nan_ch}. "
+              "These channels will be excluded from the P.E. sum.")
+    
+    area_data_np = np.array(df['area_array'].to_list())[:, :12]
+    
+    # Calculate PE per channel
+    pe_per_channel = area_data_np / mu1_safe
+    total_pe = np.sum(pe_per_channel, axis=1)
+
+    # Propagate error: variance_pe = sum( (pe_i * (err_mu_i / mu_i))^2 )
+    relative_err_sq = (mu1_err_safe / mu1_safe)**2
+    pe_variance = np.sum((pe_per_channel**2) * relative_err_sq, axis=1)
+    total_pe_err = np.sqrt(pe_variance)
+    
+    return total_pe, total_pe_err
+
+
+def process_run(run, data_dir, output_dir, delta_t_cut, pe_cut, bins,
                 mult_adc, multiplicity_cut, time_std_cut, logscale, low_light_fit_range):
     """
     Process a single run: read data, perform vectorized calculations,
     make histograms, and apply cuts.
 
     Args:
-        run: Integer run number.
-        data_dir: Directory containing ROOT files.
-        output_dir: Base directory for outputs.
-        delta_t_cut: Δt cut tuple (min, max).
-        area_cut: sum_area cut tuple (min, max).
-        bins: Number of bins for histograms.
-        mult_adc: ADC threshold for multiplicity.
-        multiplicity_cut: Multiplicity count threshold.
-        time_std_cut: Time-std cut in ns.
-        logscale: Log scale for plot y-axes.
-        low_light_fit_range: Tuple (min, max) for low-light ADC fit.
+        ...
+        pe_cut: total_pe cut tuple (min, max).
+        ...
 
     Returns:
-        Tuple (delta_t_vals, sum_area_vals, multiplicity_vals, low_light_area_data) or None.
+        Tuple (delta_t_vals, total_pe_vals, multiplicity_vals, total_pe_err_vals,
+               low_light_area_data, mu1_values_run, mu1_errors_run) or None.
     """
     print(f"Processing run {run}")
     infile = data_dir / f"run{run}_processed_v5.root"
@@ -395,7 +449,6 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
             'eventID': ak.to_numpy(chunk['eventID']),
             'nsTime': ak.to_numpy(chunk['nsTime']),
             'triggerBits': ak.to_numpy(chunk['triggerBits']),
-            'sum_area': ak.to_numpy(ak.sum(areas_12ch_ak, axis=1)),
             'multiplicity': ak.to_numpy(ak.sum(postmcut_mask, axis=1)),
             'time_std': ak.to_numpy(time_std),
             'area_array': ak.to_list(areas_ak),
@@ -405,56 +458,66 @@ def process_run(run, data_dir, output_dir, delta_t_cut, area_cut, bins,
     if not dfs:
         return None
     df_all = pd.concat(dfs, ignore_index=True)
-    df_all.to_pickle(output_dir / f"run{run}_data.pkl")
-
-    hist_dir = output_dir / f"run{run}" / "histograms"
-    cut_dir = output_dir / f"run{run}" / "cuthist"
-    ll_dir = output_dir / f"run{run}" / "lowlight"
+    
+    run_dir = output_dir / f"run{run}"
+    hist_dir = run_dir / "histograms"
+    cut_dir = run_dir / "cuthist"
+    ll_dir = run_dir / "lowlight"
     ensure_dir(hist_dir); ensure_dir(cut_dir); ensure_dir(ll_dir)
 
     plot_histogram([df_all['triggerBits'].to_numpy()], ['triggerBits'],
                    np.arange(0, 36), hist_dir / f"{run}_triggerBits.png",
                    'Trigger Bits Distribution', 'triggerBits', logscale)
-    plot_histogram([df_all['sum_area'], df_all.loc[df_all['triggerBits'] == 2, 'sum_area']],
-                   ['All', 'Trig=2'], np.linspace(0, 100000, bins + 1),
-                   hist_dir / f"{run}_sum_area.png", 'Sum Area Comparison', 'ADC', logscale)
 
+    # --- Low-light analysis and P.E. Conversion ---
     ll_events = df_all[df_all['triggerBits'] == 16]
-    low_light_area_data = np.array(ll_events['area_array'].tolist())[:, :12] if not ll_events.empty else np.array([])
+    low_light_area_data = np.array(ll_events['area_array'].to_list())[:, :12] if not ll_events.empty else np.array([])
+    
+    mu1_values_run = np.full(12, np.nan)
+    mu1_errors_run = np.full(12, np.nan)
     if low_light_area_data.size > 0:
-        fit_and_plot_low_light(low_light_area_data, ll_dir, f'Run{run}', hist_range=low_light_fit_range)
+        mu1_values_run, mu1_errors_run = fit_and_plot_low_light(low_light_area_data, ll_dir, f'Run{run}', hist_range=low_light_fit_range)
+        print(f"Run {run} fitted mu1 values (P.E. gain): {np.round(mu1_values_run, 2)}")
+        save_pickle({'mu1_values': mu1_values_run, 'mu1_errors': mu1_errors_run}, ll_dir / f'run{run}_mu1_fits.pkl')
     else:
         print(f"No low-light events found for run {run}. Skipping low-light analysis.")
 
+    # Calculate total P.E. and its uncertainty, adding new columns to the DataFrame
+    df_all['total_pe'], df_all['total_pe_err'] = calculate_total_pe(df_all, mu1_values_run, mu1_errors_run)
+    df_all.to_pickle(run_dir / f"run{run}_data_with_pe.pkl")
+
+    # Plot preliminary P.E. histogram (replaces sum_area)
+    plot_histogram([df_all['total_pe'].dropna(), df_all.loc[df_all['triggerBits'] == 2, 'total_pe'].dropna()],
+                   ['All', 'Trig=2'], np.linspace(0, 2000, bins + 1), # Adjusted range for P.E.
+                   hist_dir / f"{run}_total_pe.png", 'Total Photoelectron Comparison', 'Total P.E.', logscale)
+
+    # --- Event Selection and Final Plots ---
     events = compute_delta_t(df_all, muon_bits=32, veto_bits=2, mult_thresh=multiplicity_cut)
 
     cut_results = save_cut_histograms(
-        events, delta_t_cut, area_cut, bins, cut_dir,
+        events, delta_t_cut, pe_cut, bins, cut_dir,
         f"Run {run}", time_std_cut, logscale
     )
     if cut_results:
-        dt_vals, sa_vals, mult_vals = cut_results
-        return dt_vals, sa_vals, mult_vals, low_light_area_data
+        dt_vals, pe_vals, mult_vals, pe_err_vals = cut_results
+        return dt_vals, pe_vals, mult_vals, pe_err_vals, low_light_area_data, mu1_values_run, mu1_errors_run
     else:
-        return None, None, None, low_light_area_data
+        return None, None, None, None, low_light_area_data, mu1_values_run, mu1_errors_run
 
 
-def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
-                    fit_window, output_dir, logscale_dt, logscale_sa,
+def aggregate_plots(aggregated, delta_t_cut, pe_cut, bins,
+                    fit_window, output_dir, logscale_dt, logscale_pe,
                     perform_fit=True):
     """
-    Generate aggregated Δt and sum_area histograms, with an option for a τ fit.
+    Generate aggregated Δt and total_pe histograms, with an option for a τ fit.
 
     Args:
-        aggregated: Dict with 'delta_t' and 'sum_area' lists.
+        aggregated: Dict with 'delta_t', 'total_pe', and 'total_pe_err' lists.
         delta_t_cut: (min, max) ns.
-        area_cut: (min, max) ADC.
-        bins: Bin count.
-        fit_window: (t_low, t_high) ns for fitting τ.
-        output_dir: Directory for aggregated outputs.
-        logscale_dt: Use log y-axis for the Δt plot.
-        logscale_sa: Use log y-axis for the sum_area plot.
-        perform_fit: If True, perform and plot an exponential fit on the Δt data.
+        pe_cut: (min, max) P.E.
+        ...
+        logscale_pe: Use log y-axis for the total_pe plot.
+        ...
     """
     ensure_dir(output_dir)
     dt_min, dt_max = delta_t_cut
@@ -501,20 +564,29 @@ def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
         plt.savefig(output_dir / 'aggregated_delta_t.png'); plt.close()
         save_pickle(pickle_data, output_dir / 'aggregated_delta_t.pkl')
 
-    all_sa = np.concatenate(aggregated['sum_area']) if aggregated['sum_area'] else np.array([])
-    if all_sa.size:
-        sa_min, sa_max = area_cut
-        sa_bins = np.linspace(sa_min, sa_max, bins + 1)
-        hist_sa, sa_edges = np.histogram(all_sa, bins=sa_bins)
-        sa_centers = 0.5 * (sa_edges[:-1] + sa_edges[1:])
-        sa_err = np.sqrt(hist_sa)
-        plt.errorbar(sa_centers, hist_sa, yerr=sa_err, fmt='o', label=f'Runs')
-        plt.xlabel('Total Charge (ADC)'); plt.ylabel('Counts'); plt.title(f'Aggregated Total Charge')
-        if logscale_sa: plt.yscale('log')
+    # --- Aggregated P.E. Plot with Propagated Error ---
+    all_pe = np.concatenate(aggregated['total_pe']) if aggregated['total_pe'] else np.array([])
+    all_pe_err = np.concatenate(aggregated['total_pe_err']) if aggregated['total_pe_err'] else np.array([])
+    
+    if all_pe.size:
+        pe_min, pe_max = pe_cut
+        pe_bins = np.linspace(pe_min, pe_max, bins + 1)
+        hist_pe, pe_edges = np.histogram(all_pe, bins=pe_bins)
+        pe_centers = 0.5 * (pe_edges[:-1] + pe_edges[1:])
+
+        # Propagate gain uncertainty
+        gain_err_sq, _ = np.histogram(all_pe, bins=pe_bins, weights=all_pe_err**2)
+        
+        # Combine with Poisson uncertainty
+        total_err = np.sqrt(hist_pe + gain_err_sq)
+        
+        plt.errorbar(pe_centers, hist_pe, yerr=total_err, fmt='o', label=f'Runs')
+        plt.xlabel('Total Photoelectrons'); plt.ylabel('Counts'); plt.title(f'Aggregated Total Photoelectrons')
+        if logscale_pe: plt.yscale('log')
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
-        plt.savefig(output_dir / 'aggregated_sum_area.png'); plt.close()
-        save_pickle({'centers': sa_centers, 'hist': hist_sa, 'errors': sa_err},
-                      output_dir / 'aggregated_sum_area.pkl')
+        plt.savefig(output_dir / 'aggregated_total_pe.png'); plt.close()
+        save_pickle({'centers': pe_centers, 'hist': hist_pe, 'errors': total_err},
+                    output_dir / 'aggregated_total_pe.pkl')
 
 
 def main():
@@ -528,25 +600,25 @@ def main():
     start_run, end_run = map(int, sys.argv[1:])
 
     # --- Configuration Parameters ---
-    delta_t_cut         = (0, 10000)      # Δt range in ns
-    area_cut            = (0, 50000)      # Total charge (ADC) range
-    bins                = 20              # Bins for cut histograms
-    multiplicity_adc    = 5 * 100         # ADC threshold per channel
-    multiplicity_cut    = 2               # Min channels above threshold
-    time_std_cut        = 2.5 * 16        # Max std of channel times in ns
-    logscale            = True            # Use log scale for y-axes
-    logscale_dt         = True            # Use log scale for Δt histogram
-    logscale_sa         = False           # Use log scale for sum_area histogram
-    do_tau_fit          = True           # Whether to perform exponential fit on Δt
-    tau_fit_window      = (2500, 10000)   # Fit window for τ in ns
-    low_light_fit_range = (-50, 400)      # Fit window for low-light analysis in ADC
+    delta_t_cut 	= (0, 10000)      # Δt range in ns
+    pe_cut 		= (0, 1000)       # Total Photoelectron (P.E.) range
+    bins 		= 20              # Bins for cut histograms
+    multiplicity_adc 	= 5 * 100         # ADC threshold per channel
+    multiplicity_cut 	= 2               # Min channels above threshold
+    time_std_cut 	= 2.5 * 16        # Max std of channel times in ns
+    logscale 		= True            # Use log scale for y-axes in single runs
+    logscale_dt 	= True            # Use log scale for aggregated Δt histogram
+    logscale_pe 	= False           # Use log scale for aggregated P.E. histogram
+    do_tau_fit 		= True            # Whether to perform exponential fit on Δt
+    tau_fit_window 	= (2500, 10000)   # Fit window for τ in ns
+    low_light_fit_range = (-50, 400)        # Fit window for low-light analysis in ADC
     # --------------------------------
     dt_min, dt_max = delta_t_cut
-    sa_min, sa_max = area_cut
+    pe_min, pe_max = pe_cut
     print("=== Configuration ===")
     print(f"Runs: {start_run} to {end_run}")
-    print(f"Δt cut: {delta_t_cut}")
-    print(f"Area cut: {area_cut}")
+    print(f"Δt cut: {delta_t_cut} ns")
+    print(f"Photoelectron cut: {pe_cut} P.E.")
     print(f"Bins: {bins}")
     print(f"Multiplicity ADC threshold: {multiplicity_adc}")
     print(f"Multiplicity cut: {multiplicity_cut}")
@@ -555,21 +627,23 @@ def main():
     if do_tau_fit:
         print(f"τ fit window: {tau_fit_window} ns")
     print(f"Low-light fit range: {low_light_fit_range} ADC")
-    print(f"Logscale: {logscale}")
     print("======================")
 
     data_dir = Path('/raid1/genli/Data_D2O')
     output_dir = data_dir / (
         f"runs_{start_run}_{end_run}_dt{dt_min}-{dt_max}"
-        f"_sa{sa_min}-{sa_max}_madc{multiplicity_adc}_mcut{multiplicity_cut}_std{time_std_cut}"
+        f"_pe{pe_min}-{pe_max}_madc{multiplicity_adc}_mcut{multiplicity_cut}_std{time_std_cut}"
     )
     ensure_dir(output_dir)
 
     aggregated = {
         'delta_t': [],
-        'sum_area': [],
+        'total_pe': [],
+        'total_pe_err': [],
         'multiplicity': [],
-        'low_light_areas': []
+        'low_light_areas': [],
+        'mu1_values': [],
+        'mu1_errors': []
     }
 
     for run in range(start_run, end_run + 1):
@@ -578,7 +652,7 @@ def main():
             data_dir,
             output_dir,
             delta_t_cut,
-            area_cut,
+            pe_cut,
             bins,
             multiplicity_adc,
             multiplicity_cut,
@@ -587,25 +661,29 @@ def main():
             low_light_fit_range
         )
         if result:
-            dt_vals, sa_vals, mult_vals, ll_areas = result
+            dt_vals, pe_vals, mult_vals, pe_err_vals, ll_areas, mu1s, mu1_errs = result
             if dt_vals is not None:
                 aggregated['delta_t'].append(dt_vals)
-            if sa_vals is not None:
-                aggregated['sum_area'].append(sa_vals)
+            if pe_vals is not None:
+                aggregated['total_pe'].append(pe_vals)
+                aggregated['total_pe_err'].append(pe_err_vals)
             if mult_vals is not None:
                 aggregated['multiplicity'].append(mult_vals)
             if ll_areas.size > 0:
                 aggregated['low_light_areas'].append(ll_areas)
+            if mu1s is not None:
+                aggregated['mu1_values'].append(mu1s)
+                aggregated['mu1_errors'].append(mu1_errs)
 
     aggregate_plots(
         aggregated,
         delta_t_cut,
-        area_cut,
+        pe_cut,
         bins,
         tau_fit_window,
         output_dir,
         logscale_dt,
-        logscale_sa,
+        logscale_pe,
         perform_fit=do_tau_fit
     )
 
@@ -614,7 +692,7 @@ def main():
         print("Generating aggregated correlation map...")
         agg_df = pd.DataFrame({
             'delta_t': np.concatenate(aggregated['delta_t']),
-            'sum_area': np.concatenate(aggregated['sum_area']),
+            'total_pe': np.concatenate(aggregated['total_pe']),
             'multiplicity': np.concatenate(aggregated['multiplicity'])
         })
         plot_correlation_maps(agg_df, output_dir, "Aggregated")
@@ -622,8 +700,15 @@ def main():
     if aggregated['low_light_areas']:
         print("Performing aggregated low-light analysis...")
         all_ll_areas = np.concatenate(aggregated['low_light_areas'], axis=0)
-        print('plotting aggregated low-light fits...')
-        fit_and_plot_low_light(all_ll_areas, output_dir, 'Aggregated', hist_range=low_light_fit_range)
+        print('Plotting aggregated low-light fits...')
+        agg_mu1s, agg_mu1_errs = fit_and_plot_low_light(all_ll_areas, output_dir, 'Aggregated', hist_range=low_light_fit_range)
+        print(f"Aggregated fitted mu1 values (P.E. gain): {np.round(agg_mu1s, 2)}")
+        save_pickle({
+            'mu1_values_aggregated_fit': agg_mu1s,
+            'mu1_errors_aggregated_fit': agg_mu1_errs,
+            'mu1_values_per_run': aggregated['mu1_values'],
+            'mu1_errors_per_run': aggregated['mu1_errors']
+        }, output_dir / 'aggregated_mu1_fits.pkl')
 
 
 if __name__ == '__main__':
