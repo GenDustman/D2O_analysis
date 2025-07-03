@@ -265,7 +265,7 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
         ax.set_title(f'Channel {i}')
         ax.set_xlabel('Sum Area (ADC)')
         ax.set_ylabel('Events')
-        ax.set_yscale('log')
+        # ax.set_yscale('log')
         ax.grid(True, which='both', linestyle=':')
         ax.legend(loc='lower left', fontsize='small')
 
@@ -449,18 +449,18 @@ def main():
     start_run, end_run = map(int, sys.argv[1:])
 
     # --- Configuration Parameters ---
-    delta_t_cut     = (0, 10000)      # Δt range in ns
-    pe_cut          = (0, 1000)       # Total Photoelectron (P.E.) range
-    bins            = 20              # Bins for cut histograms
+    delta_t_cut     = (0, 10000)       # Δt range in ns
+    pe_cut          = (0, 1000)         # Total Photoelectron (P.E.) range
+    bins            = 100             # Bins for cut histograms
     multiplicity_adc= 5 * 100         # ADC threshold per channel
-    multiplicity_cut= 2               # Min channels above threshold
+    multiplicity_cut= 4               # Min channels above threshold
     time_std_cut    = 2.5 * 16        # Max std of channel times in ns
     logscale        = True            # Use log scale for y-axes in single runs
     logscale_dt     = True            # Use log scale for aggregated Δt histogram
     logscale_pe     = False           # Use log scale for aggregated P.E. histogram
     do_tau_fit      = True            # Whether to perform exponential fit on Δt
     tau_fit_window  = (2500, 10000)   # Fit window for τ in ns
-    low_light_fit_range = (-50, 400)      # Fit window for low-light analysis in ADC
+    low_light_fit_range = (-50, 400)  # Fit window for low-light analysis in ADC
     # --------------------------------
     dt_min, dt_max = delta_t_cut
     pe_min, pe_max = pe_cut
@@ -468,7 +468,15 @@ def main():
     print(f"Runs: {start_run} to {end_run}")
     print(f"Δt cut: {delta_t_cut} ns")
     print(f"Photoelectron cut: {pe_cut} P.E.")
-    # ... (rest of the print statements)
+    print(f"Bins: {bins}")
+    print(f"Multiplicity ADC threshold: {multiplicity_adc}")
+    print(f"Multiplicity cut: {multiplicity_cut}")
+    print(f"Time-std cut: < {time_std_cut} ns")
+    print(f"Perform τ fit: {do_tau_fit}")
+    if do_tau_fit:
+        print(f"τ fit window: {tau_fit_window} ns")
+    print(f"Low-light fit range: {low_light_fit_range} ADC")
+    print("======================")
 
     data_dir = Path('/raid1/genli/Data_D2O')
     output_dir = data_dir / (
