@@ -199,7 +199,8 @@ def save_cut_histograms(events, delta_t_range, pe_range, bins,
     pe_bins = np.linspace(pe_min, pe_max, bins + 1)
     pe_counts, pe_edges = np.histogram(sel['total_pe'], bins=pe_bins)
     pe_centers = 0.5 * (pe_edges[:-1] + pe_edges[1:])
-
+    peak_location = pe_centers[np.argmax(pe_counts)]
+    peak = np.round(peak_location, 1)  # Round to 1 decimal
     # The error is the simple square root of the number of counts.
     pe_err = np.sqrt(pe_counts)
 
@@ -207,6 +208,8 @@ def save_cut_histograms(events, delta_t_range, pe_range, bins,
                 save_dir / 'total_pe_hist.pkl')
     plt.errorbar(pe_centers, pe_counts, yerr=pe_err, fmt='o', label=run_label)
     plt.xlabel('Total Photoelectrons'); plt.ylabel('Counts'); plt.title('Total Photoelectron Histogram')
+    #draw vertical lines for max_pe
+    plt.axvline(peak, color='red', linestyle='--', label=f'Peak = {peak} p.e.')
     if logscale: plt.yscale('log')
     plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'total_pe_hist.png'); plt.close()
 
@@ -427,9 +430,12 @@ def aggregate_plots(aggregated, delta_t_cut, pe_cut, bins,
         pe_bins = np.linspace(pe_min, pe_max, bins + 1)
         hist_pe, pe_edges = np.histogram(all_pe, bins=pe_bins)
         pe_centers = 0.5 * (pe_edges[:-1] + pe_edges[1:])
+        peak_location = pe_centers[np.argmax(hist_pe)]
+        peak = np.round(peak_location, 1)  # Round to 1 decimal
         pe_err = np.sqrt(hist_pe)
         
         plt.errorbar(pe_centers, hist_pe, yerr=pe_err, fmt='o', label=f'Runs')
+        plt.axvline(peak, color='red', linestyle='--', label=f'Peak = {peak} p.e.')
         plt.xlabel('Total Photoelectrons'); plt.ylabel('Counts'); plt.title(f'Aggregated Total Photoelectrons')
         if logscale_pe: plt.yscale('log')
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
@@ -452,8 +458,8 @@ def main():
     delta_t_cut     = (0, 10000)       # Δt range in ns
     pe_cut          = (0, 1000)         # Total Photoelectron (P.E.) range
     bins            = 100             # Bins for cut histograms
-    multiplicity_adc= 5 * 100         # ADC threshold per channel
-    multiplicity_cut= 4               # Min channels above threshold
+    multiplicity_adc= 2 * 100         # ADC threshold per channel
+    multiplicity_cut= 0               # Min channels above threshold
     time_std_cut    = 2.5 * 16        # Max std of channel times in ns
     logscale        = True            # Use log scale for y-axes in single runs
     logscale_dt     = True            # Use log scale for aggregated Δt histogram
