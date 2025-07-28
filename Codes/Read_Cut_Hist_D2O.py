@@ -10,6 +10,8 @@ MODIFICATION:
 - Changed analysis from total charge (ADC) to total photoelectrons (P.E.).
 - Error bars on P.E. histograms are calculated using simple Poisson counting
   statistics (sqrt(N)), neglecting the uncertainty from the P.E. calculation itself.
+- ADDED: SiPM analysis for events with triggerbit >= 32, plotting area
+  histograms for channels 12-21.
 """
 import sys
 from pathlib import Path
@@ -77,6 +79,53 @@ def plot_histogram(arrays, labels, bins, img_path, title, xlabel,
     plt.savefig(img_path)
     plt.close()
     return outputs
+
+
+def plot_sipm_histograms(df, output_dir, label, hist_bins=100, hist_range=(-50, 1500)):
+    """
+    Selects events with trigger bit >= 32 and plots area histograms for SiPM channels 12-21.
+    """
+    # 1. Select events with the SiPM trigger (triggerBits >= 32)
+    sipm_events = df[df['triggerBits'] >= 32].copy()
+    if sipm_events.empty:
+        print(f"No SiPM events (triggerBits >= 32) found for {label}. Skipping SiPM histograms.")
+        return
+
+    area_data = np.array(sipm_events['area_array'].to_list())
+    
+    # 2. Define the SiPM channels and create the plot grid
+    sipm_channels = range(12, 22) # Channels 12 through 21
+    fig, axes = plt.subplots(3, 4, figsize=(20, 15))
+    fig.suptitle(f'SiPM Channel Area (triggerBits>=32) - {label}', fontsize=16)
+    axes = axes.flatten()
+
+    # 3. Loop through channels and plot a histogram for each
+    for i, ch in enumerate(sipm_channels):
+        ax = axes[i]
+        if ch < area_data.shape[1]:
+            ch_data = area_data[:, ch]
+            ax.hist(ch_data, bins=hist_bins, range=hist_range, histtype='step', linewidth=1.5, color='darkcyan')
+            ax.set_title(f'SiPM Channel {ch}')
+            ax.set_xlabel('Area (ADC)')
+            ax.set_ylabel('Events')
+            ax.grid(True, which='both', linestyle=':')
+            ax.set_yscale('log')
+        else:
+            # This case handles if the data array has fewer than 22 columns
+            ax.text(0.5, 0.5, f'Channel {ch}\nNot Available', ha='center', va='center', transform=ax.transAxes)
+            ax.set_axis_off()
+    
+    # Hide any unused subplots in the 3x4 grid
+    for i in range(len(sipm_channels), len(axes)):
+        axes[i].set_axis_off()
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    ensure_dir(output_dir)
+    filename_label = label.replace(" ", "_").replace(":", "")
+    save_path = output_dir / f'{filename_label}_sipm_area_histograms.png'
+    plt.savefig(save_path)
+    print(f"SiPM histograms saved to {save_path}")
+    plt.close()
 
 
 def plot_correlation_maps(df, output_dir, label):
@@ -201,7 +250,6 @@ def save_cut_histograms(events, delta_t_range, pe_range, bins,
     pe_centers = 0.5 * (pe_edges[:-1] + pe_edges[1:])
     peak_location = pe_centers[np.argmax(pe_counts)]
     peak = np.round(peak_location, 1)
-    # Calculate the mean of the total_pe data
     mean_pe = sel['total_pe'].mean()
     mean_pe_val = np.round(mean_pe, 1)
     pe_err = np.sqrt(pe_counts)
@@ -209,7 +257,6 @@ def save_cut_histograms(events, delta_t_range, pe_range, bins,
     save_pickle({'hist': pe_counts, 'centers': pe_centers, 'errors': pe_err},
                 save_dir / 'total_pe_hist.pkl')
 
-    # Create a new label that includes the mean
     plot_label = f'{run_label}\nMean = {mean_pe_val} p.e.'
     plt.errorbar(pe_centers, pe_counts, yerr=pe_err, fmt='o', label=plot_label)
     
@@ -273,7 +320,6 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, hist_range, hist_b
         ax.set_title(f'Channel {i}')
         ax.set_xlabel('Sum Area (ADC)')
         ax.set_ylabel('Events')
-        # ax.set_yscale('log')
         ax.grid(True, which='both', linestyle=':')
         ax.legend(loc='lower left', fontsize='small')
 
@@ -309,20 +355,20 @@ def calculate_total_pe(df, mu1_values):
 
 
 def process_run(run, data_dir, output_dir, delta_t_cut, pe_cut, bins,
-                multiplicity_spe, multiplicity_cut, time_std_cut, logscale, low_light_fit_range):
+                multiplicity_spe, multiplicity_cut, time_std_cut, logscale, low_light_fit_range, sipm_hist_config, M1_or_M2):
     """
     Process a single run: read data, perform calculations, and apply cuts.
-    MODIFIED: Multiplicity is now calculated based on a per-channel P.E. threshold
-    derived from run-specific low-light fits.
     """
-    print(f"Processing run {run}")
-    infile = data_dir / f"run{run}_processed_v5.root"
+    print(f"--- Processing run {run} ---")
+    if M1_or_M2 == 'M1':
+        infile = data_dir / f"run{run}_processed_v5.root"
+    elif M1_or_M2 == 'M2':
+        infile = data_dir / f"run{run}_processed_H2O_v5.root"
     if not infile.exists():
         print(f"Missing file: {infile}")
         return None
 
     # Step 1: Read all necessary data into a single DataFrame first.
-    # We defer multiplicity and time_std calculation until after the low-light fit.
     dfs = []
     branches = ['eventID', 'nsTime', 'triggerBits', 'area', 'peakPosition']
     for chunk in uproot.open(infile)['tree'].iterate(branches, library='ak', step_size='500 MB'):
@@ -362,42 +408,36 @@ def process_run(run, data_dir, output_dir, delta_t_cut, pe_cut, bins,
     # Step 3: Calculate multiplicity and time_std using the run-specific mu1 values.
     area_data_np = np.array(df_all['area_array'].to_list())[:, :12]
     times_data_np = np.array(df_all['peakPosition'].to_list())[:, :12]
-
-    # Handle potential fit failures (NaNs or non-positive mu1) to avoid division by zero.
     mu1_safe = np.where(np.isnan(mu1_values_run) | (mu1_values_run <= 0), np.inf, mu1_values_run)
-    if np.any(mu1_safe == np.inf):
-        nan_ch = np.where(np.isnan(mu1_values_run) | (mu1_values_run <= 0))[0]
-        print(f"Warning: mu1 fit failed/invalid for channels {nan_ch} in run {run}. "
-              "These channels won't contribute to multiplicity.")
-
-    # Calculate P.E. per channel and create the mask based on the SPE threshold.
     pe_per_channel = area_data_np / mu1_safe
     postmcut_mask = pe_per_channel > multiplicity_spe
-
-    # Calculate and add multiplicity and time_std to the DataFrame.
     df_all['multiplicity'] = np.sum(postmcut_mask, axis=1)
     masked_times = np.where(postmcut_mask, times_data_np, np.nan)
     df_all['time_std'] = np.nanstd(masked_times, axis=1)
 
-    # Step 4: Proceed with the rest of the analysis as before.
+    # Step 4: Calculate P.E. and run standard analysis.
     df_all['total_pe'] = calculate_total_pe(df_all, mu1_values_run)
     df_all.to_pickle(run_dir / f"run{run}_data_with_pe.pkl")
-
     plot_histogram([df_all['total_pe'].dropna(), df_all.loc[df_all['triggerBits'] == 2, 'total_pe'].dropna()],
                    ['All', 'Trig=2'], np.linspace(0, 2000, bins + 1),
                    hist_dir / f"{run}_total_pe.png", 'Total Photoelectron Comparison', 'Total P.E.', logscale)
-
     events = compute_delta_t(df_all, muon_bits=32, veto_bits=2, mult_thresh=multiplicity_cut)
-
     cut_results = save_cut_histograms(
         events, delta_t_cut, pe_cut, bins, cut_dir,
         f"Run {run}", time_std_cut, logscale
     )
+    
+    # Step 5: Perform the new SiPM analysis for the single run.
+    plot_sipm_histograms(df_all, run_dir, f"Run {run}", **sipm_hist_config)
+    
+    # Step 6: Return all necessary data for aggregation.
+    sipm_events_df = df_all[df_all['triggerBits'] >= 32]
+    
     if cut_results:
         dt_vals, pe_vals, mult_vals = cut_results
-        return dt_vals, pe_vals, mult_vals, low_light_area_data
+        return dt_vals, pe_vals, mult_vals, low_light_area_data, sipm_events_df
     else:
-        return None, None, None, low_light_area_data
+        return None, None, None, low_light_area_data, sipm_events_df
 
 
 def aggregate_plots(aggregated, delta_t_cut, pe_cut, bins,
@@ -454,12 +494,10 @@ def aggregate_plots(aggregated, delta_t_cut, pe_cut, bins,
         pe_centers = 0.5 * (pe_edges[:-1] + pe_edges[1:])
         peak_location = pe_centers[np.argmax(hist_pe)]
         peak = np.round(peak_location, 1)
-        # Calculate the mean of the aggregated total_pe data
         mean_pe = all_pe.mean()
         mean_pe_val = np.round(mean_pe, 1)
         pe_err = np.sqrt(hist_pe)
 
-        # Create a new label that includes the mean
         plot_label = f'Runs\nMean = {mean_pe_val} p.e.'
         plt.errorbar(pe_centers, hist_pe, yerr=pe_err, fmt='o', label=plot_label)
         
@@ -483,6 +521,8 @@ def main():
     start_run, end_run = map(int, sys.argv[1:])
 
     # --- Configuration Parameters ---
+    # PMT Analysis
+    M1_or_M2          = 'M2'            # 'M1' or 'M2'
     delta_t_cut       = (0, 10000)      # Δt range in ns
     pe_cut            = (0, 1000)       # Total Photoelectron (P.E.) range
     bins              = 100             # Bins for cut histograms
@@ -495,25 +535,33 @@ def main():
     do_tau_fit        = True            # Whether to perform exponential fit on Δt
     tau_fit_window    = (2500, 10000)   # Fit window for τ in ns
     low_light_fit_range = (-50, 400)    # Fit window for low-light analysis in ADC
+    
+    # SiPM Analysis
+    sipm_hist_config = {
+        'hist_bins': 100,
+        'hist_range': (-50, 1000)
+    }
     # --------------------------------
+    
     dt_min, dt_max = delta_t_cut
     pe_min, pe_max = pe_cut
     print("=== Configuration ===")
     print(f"Runs: {start_run} to {end_run}")
     print(f"Δt cut: {delta_t_cut} ns")
     print(f"Photoelectron cut: {pe_cut} P.E.")
-    print(f"Bins: {bins}")
     print(f"Multiplicity SPE threshold: {multiplicity_spe}")
     print(f"Multiplicity cut: {multiplicity_cut}")
     print(f"Time-std cut: < {time_std_cut} ns")
-    print(f"Perform τ fit: {do_tau_fit}")
-    if do_tau_fit:
-        print(f"τ fit window: {tau_fit_window} ns")
-    print(f"Low-light fit range: {low_light_fit_range} ADC")
+    print(f"SiPM Area Histogram Bins: {sipm_hist_config['hist_bins']}, Range: {sipm_hist_config['hist_range']} ADC")
     print("======================")
 
-    data_dir = Path('/raid1/genli/Data_D2O')
-    # Updated output directory name to reflect the new multiplicity parameter
+    if M1_or_M2 == 'M1':
+        data_dir = Path('/raid1/genli/Data_D2O/M1_data')
+    elif M1_or_M2 == 'M2':
+        data_dir = Path('/raid1/genli/Data_D2O/M2_data')
+    else:
+        raise ValueError("M1_or_M2 must be 'M1' or 'M2'.")
+    
     output_dir = data_dir / (
         f"runs_{start_run}_{end_run}_dt{dt_min}-{dt_max}"
         f"_pe{pe_min}-{pe_max}_mspe{multiplicity_spe}_mcut{multiplicity_cut}_std{time_std_cut}"
@@ -524,18 +572,18 @@ def main():
         'delta_t': [],
         'total_pe': [],
         'multiplicity': [],
-        'low_light_areas': []
+        'low_light_areas': [],
+        'sipm_events': []  # For aggregating SiPM data
     }
 
     for run in range(start_run, end_run + 1):
-        # Pass multiplicity_spe to the processing function
         result = process_run(
             run, data_dir, output_dir, delta_t_cut, pe_cut, bins,
             multiplicity_spe, multiplicity_cut, time_std_cut,
-            logscale, low_light_fit_range
+            logscale, low_light_fit_range, sipm_hist_config, M1_or_M2
         )
         if result:
-            dt_vals, pe_vals, mult_vals, ll_areas = result
+            dt_vals, pe_vals, mult_vals, ll_areas, sipm_df = result
             if dt_vals is not None:
                 aggregated['delta_t'].append(dt_vals)
             if pe_vals is not None:
@@ -544,7 +592,10 @@ def main():
                 aggregated['multiplicity'].append(mult_vals)
             if ll_areas.size > 0:
                 aggregated['low_light_areas'].append(ll_areas)
+            if not sipm_df.empty:
+                aggregated['sipm_events'].append(sipm_df)
 
+    # --- Aggregated PMT Analysis ---
     aggregate_plots(
         aggregated, delta_t_cut, pe_cut, bins, tau_fit_window,
         output_dir, logscale_dt, logscale_pe, perform_fit=do_tau_fit
@@ -564,6 +615,13 @@ def main():
         all_ll_areas = np.concatenate(aggregated['low_light_areas'], axis=0)
         fit_and_plot_low_light(all_ll_areas, output_dir, 'Aggregated', hist_range=low_light_fit_range)
 
+    # --- Aggregated SiPM Analysis ---
+    if aggregated['sipm_events']:
+        print("Generating aggregated SiPM histograms...")
+        agg_sipm_df = pd.concat(aggregated['sipm_events'], ignore_index=True)
+        plot_sipm_histograms(agg_sipm_df, output_dir, "Aggregated", **sipm_hist_config)
+
+    print("--- Analysis Complete ---")
 
 if __name__ == '__main__':
     main()
