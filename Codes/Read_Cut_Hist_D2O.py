@@ -13,7 +13,8 @@ MODIFICATION:
 - ADDED: SiPM analysis for events with triggerbit >= 32, plotting area
   histograms for channels 12-21.
 - ADDED: Aggregated "Total Photoelectron Comparison" plot.
-- ADDED: "Veto Efficiency" plot for individual and aggregated runs.
+- REVISED: Veto Efficiency plot is now generated ONLY after all quality cuts
+  (multiplicity, P.E. range, time-std) have been applied.
 """
 import sys
 from pathlib import Path
@@ -102,7 +103,8 @@ def plot_veto_efficiency(trig2_pe, trig2_or_34_pe, bins, vetorange, pe_range, im
     # Ratio p = k/n where k = counts_2 and n = counts_2_or_34
     ratio = np.divide(counts_2[valid_mask], counts_2_or_34[valid_mask])
     efficiency[valid_mask] = 1 - ratio
-    
+    # Calculate average efficiency for valid bins within vetorange
+    average_efficiency = np.mean(efficiency[valid_mask & (bin_centers >= vetorange[0]) & (bin_centers <= vetorange[1])])
     # Binomial error for the ratio p: sqrt(p * (1-p) / n)
     n = counts_2_or_34[valid_mask]
     p = ratio
@@ -111,8 +113,9 @@ def plot_veto_efficiency(trig2_pe, trig2_or_34_pe, bins, vetorange, pe_range, im
     # --- Plotting ---
     plt.figure(figsize=(10, 6))
     plt.errorbar(bin_centers[valid_mask], efficiency[valid_mask], yerr=error[valid_mask],
-                 fmt='o', capsize=3, label='Data', color='navy')
-    
+                 fmt='o', capsize=3, label='efficiency = 1 - N(trig=2) / N(trig=2 or 34)', color='navy', markersize=5)
+    plt.axhline(average_efficiency, color='red', linestyle='--',
+                label=f'Average Efficiency = {average_efficiency:.4f}')
     plt.xlabel('Total Photoelectrons (P.E.)')
     plt.ylabel('Veto Efficiency')
     plt.title(f"{title} ({M1_or_M2})")
@@ -122,7 +125,7 @@ def plot_veto_efficiency(trig2_pe, trig2_or_34_pe, bins, vetorange, pe_range, im
     plt.grid(which='minor', linestyle=':', linewidth=0.5)
     plt.minorticks_on()
     plt.tight_layout()
-    
+    plt.legend()
     ensure_dir(img_path.parent)
     plt.savefig(img_path)
     plt.close()
@@ -492,27 +495,7 @@ def process_run(run, data_dir, output_dir, delta_t_cut, pe_cut, bins, veto_bins,
     df_all.to_pickle(run_dir / f"run{run}_{M1_or_M2}_data_with_pe.pkl")
     
     # ==============================================================================
-    # --- BLOCK 1: Analysis BEFORE event selection cuts ---
-    # ==============================================================================
-    print(f"Run {run}: Generating veto plots BEFORE cuts...")
-    # --- Data for PE Comparison and Veto Efficiency (BEFORE cuts) ---
-    pe_trig2_or_34_before_cuts = df_all.loc[(df_all['triggerBits'] == 2) | (df_all['triggerBits'] == 34), 'total_pe'].dropna()
-    pe_trig2_before_cuts = df_all.loc[df_all['triggerBits'] == 2, 'total_pe'].dropna()
-    
-    # --- Plot 1: Total Photoelectron Comparison (per run, BEFORE cuts) ---
-    plot_histogram(
-        [pe_trig2_or_34_before_cuts, pe_trig2_before_cuts], ['Trig=2 or 34', 'Trig=2'], np.linspace(*pe_cut, bins + 1),
-        hist_dir / f"{run}_{M1_or_M2}_total_pe_comparison_before_cuts.png", 'Total PE Comparison (Before Cuts)', 'Total P.E.', M1_or_M2, logscale)
-    
-    # --- Plot 2: Veto Efficiency (per run, BEFORE cuts) ---
-    veto_img_path = hist_dir / f"{run}_{M1_or_M2}_veto_efficiency_before_cuts.png"
-    veto_pkl_path = hist_dir / f"{run}_{M1_or_M2}_veto_efficiency_before_cuts.pkl"
-    plot_veto_efficiency(pe_trig2_before_cuts.to_numpy(), pe_trig2_or_34_before_cuts.to_numpy(),
-                         veto_bins, vetorange, pe_cut, veto_img_path, veto_pkl_path,
-                         f"Veto Efficiency Run {run} (Before Cuts)", M1_or_M2)
-
-    # ==============================================================================
-    # --- BLOCK 2: Apply event selection cuts ---
+    # --- Apply event selection cuts and generate Veto Efficiency Plots ---
     # ==============================================================================
     print(f"Run {run}: Generating veto plots AFTER cuts...")
     pe_min, pe_max = pe_cut
@@ -526,20 +509,20 @@ def process_run(run, data_dir, output_dir, delta_t_cut, pe_cut, bins, veto_bins,
     df_filtered = df_all[passing_cuts_mask & df_all['total_pe'].notna()]
     
     # --- Data for PE Comparison and Veto Efficiency (AFTER cuts) ---
-    pe_trig2_or_34_after_cuts = df_filtered.loc[(df_filtered['triggerBits'] == 2) | (df_filtered['triggerBits'] == 34), 'total_pe']
-    pe_trig2_after_cuts = df_filtered.loc[df_filtered['triggerBits'] == 2, 'total_pe']
+    pe_trig2 = df_filtered.loc[(df_filtered['triggerBits'] == 2), 'total_pe']
+    pe_trig2_or_34 = df_filtered.loc[(df_filtered['triggerBits'] == 2) | (df_filtered['triggerBits'] == 34), 'total_pe']
     
-    # --- Plot 3: Total Photoelectron Comparison (per run, AFTER cuts) ---
+    # --- Plot 1: Total Photoelectron Comparison (per run, after cuts) ---
     plot_histogram(
-        [pe_trig2_or_34_after_cuts, pe_trig2_after_cuts], ['Trig=2 or 34', 'Trig=2'], np.linspace(*pe_cut, bins + 1),
-        hist_dir / f"{run}_{M1_or_M2}_total_pe_comparison_after_cuts.png", 'Total PE Comparison (After Cuts)', 'Total P.E.', M1_or_M2, logscale)
+        [pe_trig2_or_34, pe_trig2], ['Trig=2 or 34', 'Trig=2'], np.linspace(*pe_cut, bins + 1),
+        hist_dir / f"{run}_{M1_or_M2}_total_pe_comparison.png", 'Total PE Comparison', 'Total P.E.', M1_or_M2, logscale)
 
-    # --- Plot 4: Veto Efficiency (per run, AFTER cuts) ---
-    veto_img_path_after = hist_dir / f"{run}_{M1_or_M2}_veto_efficiency_after_cuts.png"
-    veto_pkl_path_after = hist_dir / f"{run}_{M1_or_M2}_veto_efficiency_after_cuts.pkl"
-    plot_veto_efficiency(pe_trig2_after_cuts.to_numpy(), pe_trig2_or_34_after_cuts.to_numpy(),
-                         veto_bins, vetorange, pe_cut, veto_img_path_after, veto_pkl_path_after,
-                         f"Veto Efficiency Run {run} (After Cuts)", M1_or_M2)
+    # --- Plot 2: Veto Efficiency (per run, after cuts) ---
+    veto_img_path = hist_dir / f"{run}_{M1_or_M2}_veto_efficiency.png"
+    veto_pkl_path = hist_dir / f"{run}_{M1_or_M2}_veto_efficiency.pkl"
+    plot_veto_efficiency(pe_trig2.to_numpy(), pe_trig2_or_34.to_numpy(),
+                         veto_bins, vetorange, pe_cut, veto_img_path, veto_pkl_path,
+                         f"Veto Efficiency Run {run}", M1_or_M2)
 
     # ==============================================================================
     # --- Continue with Delta T analysis ---
@@ -554,14 +537,13 @@ def process_run(run, data_dir, output_dir, delta_t_cut, pe_cut, bins, veto_bins,
     
     sipm_events_df = df_all[df_all['triggerBits'] >= 32]
     
-    # IMPORTANT: Update the return statement to pass the desired data for aggregation.
-    # Here, we pass the ORIGINAL, "before cuts" data to maintain the script's previous behavior for aggregated plots.
-    # If you want aggregated "after cuts" plots, you would need to modify the `main` function as well.
     if cut_results:
         dt_vals, pe_vals, mult_vals = cut_results
-        return dt_vals, pe_vals, mult_vals, low_light_area_data, sipm_events_df, pe_trig2_before_cuts, pe_trig2_or_34_before_cuts
+        return (dt_vals, pe_vals, mult_vals, low_light_area_data, sipm_events_df,
+                pe_trig2, pe_trig2_or_34)
     else:
-        return None, None, None, low_light_area_data, sipm_events_df, pe_trig2_before_cuts, pe_trig2_or_34_before_cuts
+        return (None, None, None, low_light_area_data, sipm_events_df,
+                pd.Series(dtype=float), pd.Series(dtype=float))
 
 
 def aggregate_plots(aggregated, delta_t_cut, pe_cut, bins,
@@ -645,13 +627,13 @@ def main():
     Entry point: parse arguments, print configuration,
     loop over runs, and generate aggregated histograms.
     """
-    if len(sys.argv) != 3:
-        print("Usage: python script.py <start_run> <end_run>")
+    if len(sys.argv) != 4:
+        print("Usage: python script.py <start_run> <end_run> <M1_or_M2>")
         sys.exit(1)
-    start_run, end_run = map(int, sys.argv[1:])
-
+    start_run = int(sys.argv[1])
+    end_run = int(sys.argv[2])
+    M1_or_M2 = sys.argv[3]
     # --- Configuration Parameters ---
-    M1_or_M2 = 'M2'
     delta_t_cut = (0, 10000)
     pe_cut = (0, 2000)
     bins = 100

@@ -3,8 +3,8 @@
 # SLURM Job Submission Script (Using Cluster Default Python)
 #
 # This script splits a run range into multiple jobs and submits each job via 
-# SLURM's sbatch command. Each job calls your Python script (script.py)
-# with a calculated start and end run.
+# SLURM's sbatch command. Each job calls Read_Cut_Hist_D2O.py with a calculated 
+# start and end run along with the analysis type (M1 or M2).
 ###############################################################################
 
 ###############################################################################
@@ -12,7 +12,8 @@
 ###############################################################################
 start_run=19520
 end_run=19529
-njobs=5
+M1_or_M2="M1"  # Analysis type, can be 'M1' or 'M2'
+njobs=1
 
 # Calculate total runs and runs per job (using ceiling division).
 total_runs=$(( end_run - start_run + 1 ))
@@ -36,11 +37,12 @@ submit_job() {
     local job_num=$1
     local job_start=$2
     local job_end=$3
-
+    local M1_or_M2=$4
+    
     echo "Submitting job ${job_num}: Runs ${job_start} to ${job_end}"
     
     # Submit the job using the cluster's default Python.
-    sbatch -J "job_${job_num}" --wrap="python ../Codes/Read_Cut_Hist.py ${job_start} ${job_end}"
+    sbatch -J "job_${job_num}" --wrap="python ../Codes/Read_Cut_Hist_D2O.py ${job_start} ${job_end} ${M1_or_M2}"
 }
 
 ###############################################################################
