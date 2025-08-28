@@ -10,10 +10,10 @@
 SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 
 # Hardcoded Run Parameters
-start_run=573
-end_run=574
-M1_or_M2="M2"
-njobs=2
+start_run=24531
+end_run=24585
+M1_or_M2="M1"
+njobs=30
 
 # Data Directories
 DATA_BASE_DIR="/raid1/genli/Data_D2O/M1_data"

@@ -1,0 +1,16 @@
+Master output will be saved to: /raid1/genli/Data_D2O/M2_data/analysis_396-397_M2_20250820-220724/MASTER_RESULTS
+Found 2 sub-job directories to aggregate.
+Processing subjob_396-396...
+Processing subjob_397-397...
+Aggregating delta_t, total_pe, and fitting for tau...
+Correlation map saved to /raid1/genli/Data_D2O/M2_data/analysis_396-397_M2_20250820-220724/MASTER_RESULTS/Master_Runs_396_397_M2_correlation_map.png
+Aggregating veto efficiency data...
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M2_data/analysis_396-397_M2_20250820-220724/MASTER_RESULTS/Master_Runs_396_397_M2_veto_efficiency_master.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M2_data/analysis_396-397_M2_20250820-220724/MASTER_RESULTS/Master_Runs_396_397_M2_veto_efficiency_master.pkl
+Low-light fits saved to /raid1/genli/Data_D2O/M2_data/analysis_396-397_M2_20250820-220724/MASTER_RESULTS/Master_Runs_396_397_M2_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M2_data/analysis_396-397_M2_20250820-220724/MASTER_RESULTS/Master_Runs_396_397_M2_low_light_fits.pkl
+SiPM histograms saved to /raid1/genli/Data_D2O/M2_data/analysis_396-397_M2_20250820-220724/MASTER_RESULTS/Master_Runs_396_397_M2_sipm_area_histograms.png
+SiPM histogram data saved to /raid1/genli/Data_D2O/M2_data/analysis_396-397_M2_20250820-220724/MASTER_RESULTS/Master_Runs_396_397_M2_sipm_area_histograms.pkl
+Aggregating Thin Veto data...
+
+--- Master Aggregation Complete ---

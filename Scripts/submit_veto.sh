@@ -10,10 +10,10 @@
 SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 
 # Hardcoded Run Parameters
-start_run=573
-end_run=574
+start_run=396
+end_run=397
 M1_or_M2="M2"
-njobs=2
+njobs=3
 
 # Data Directories
 DATA_BASE_DIR="/raid1/genli/Data_D2O/M1_data"
@@ -47,7 +47,7 @@ while [ $current_run -le $end_run ]; do
     echo "Submitting processing job ${job}: Runs ${job_start} to ${job_end}"
     
     # MODIFIED: Use the SCRIPT_DIR variable
-    JOB_ID=$(sbatch --parsable -J "job_${job}_${M1_or_M2}" --wrap="python ${SCRIPT_DIR}/Read_Cut_Hist_D2O_multi.py ${job_start} ${job_end} ${M1_or_M2} ${TOP_OUTPUT_DIR}")
+    JOB_ID=$(sbatch --parsable -J "job_${job}_${M1_or_M2}" --wrap="python ${SCRIPT_DIR}/Read_Cut_Hist_D2O_multi_veto.py ${job_start} ${job_end} ${M1_or_M2} ${TOP_OUTPUT_DIR}")
     
     JOB_IDS+=($JOB_ID)
     current_run=$(( job_end + 1 ))
@@ -65,6 +65,6 @@ echo "Submitting final aggregation job with dependency list: ${dependency_list}"
 # MODIFIED: Use the SCRIPT_DIR variable
 sbatch --dependency=afterok:${dependency_list} \
        -J "aggregate_${M1_or_M2}" \
-       --wrap="python ${SCRIPT_DIR}/aggregate_master.py ${TOP_OUTPUT_DIR}"
+       --wrap="python ${SCRIPT_DIR}/aggregate_master_veto.py ${TOP_OUTPUT_DIR}"
 
 echo "Aggregation job has been submitted. It will run automatically after the others complete."

@@ -1,0 +1,28 @@
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+No artists with labels found to put in legend.  Note that artists whose label start with an underscore are ignored when legend() is called with no argument.
+=== Configuration ===
+Analysis type: M2
+Runs: 573 to 573
+Output Directory for this job: /raid1/genli/Data_D2O/M2_data/analysis_573-574_M2_20250819-111542/subjob_573-573
+Δt cut: (0, 10000) ns
+Photoelectron cut: (0, 2000) P.E.
+Time-std cut: < 40.0 ns
+Thin Veto Analysis: ENABLED
+======================
+--- Processing run 573 ---
+No low-light events for run 573. P.E. and multiplicity calculations will fail.
+ERROR: Low-light fit failed. Cannot calculate photoelectrons.
+Run 573: Generating veto plots AFTER cuts...
+No events for veto efficiency calculation for Veto Efficiency Run 573. Skipping.
+Run 573: after NaN drop: 0 events
+Run 573: after Δt cut: 0 events
+Run 573: after total_pe cut: 0 events
+Run 573: after time-std < 40.0 ns cut: 0 events
+DataFrame is empty for Run 573. Skipping correlation map.
+SiPM histograms saved to /raid1/genli/Data_D2O/M2_data/analysis_573-574_M2_20250819-111542/subjob_573-573/run573_20250806-15/Run_573_M2_sipm_area_histograms.png
+SiPM histogram data saved to /raid1/genli/Data_D2O/M2_data/analysis_573-574_M2_20250819-111542/subjob_573-573/run573_20250806-15/Run_573_M2_sipm_area_histograms.pkl
+--- Generating Aggregated Thin Veto Comparison Plots ---
+Saving aggregated data for sub-job 573-573...
+Successfully saved data for master aggregation.
+--- Sub-job Analysis Complete ---

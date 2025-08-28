@@ -1,0 +1,30 @@
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+=== Configuration ===
+Analysis type: M2
+Runs: 893 to 893
+Output Directory for this job: /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893
+Δt cut: (0, 10000) ns
+Photoelectron cut: (0, 2000) P.E.
+Time-std cut: < 40.0 ns
+Thin Veto Analysis: ENABLED
+======================
+--- Processing run 893 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893/run893_20250819-19/lowlight/Run893_M2_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893/run893_20250819-19/lowlight/Run893_M2_low_light_fits.pkl
+Run 893: Generating veto plots AFTER cuts...
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893/run893_20250819-19/histograms/893_M2_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893/run893_20250819-19/histograms/893_M2_veto_efficiency.pkl
+Run 893: after NaN drop: 385687 events
+Run 893: after Δt cut: 2059 events
+Run 893: after total_pe cut: 1676 events
+Run 893: after time-std < 40.0 ns cut: 1676 events
+Correlation map saved to /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893/run893_20250819-19/cuthist/Run_893_M2_correlation_map.png
+SiPM histograms saved to /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893/run893_20250819-19/Run_893_M2_sipm_area_histograms.png
+SiPM histogram data saved to /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893/run893_20250819-19/Run_893_M2_sipm_area_histograms.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893/Runs_893_893_M2_veto_efficiency_agg.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M2_data/analysis_892-893_M2_20250819-213844/subjob_893-893/Runs_893_893_M2_veto_efficiency_agg.pkl
+--- Generating Aggregated Thin Veto Comparison Plots ---
+Saving aggregated data for sub-job 893-893...
+Successfully saved data for master aggregation.
+--- Sub-job Analysis Complete ---
