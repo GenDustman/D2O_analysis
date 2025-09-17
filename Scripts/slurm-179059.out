@@ -1,0 +1,45 @@
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+=== Configuration ===
+Analysis type: M2
+Runs: 1546 to 1547
+Output Directory for this job: /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547
+Δt cut: (0, 10000) ns
+Photoelectron cut: (0, 2000) P.E.
+Time-std cut: < 40.0 ns
+Thin Veto Analysis: ENABLED
+======================
+--- Processing run 1546 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1546_20250916-10/lowlight/Run1546_M2_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1546_20250916-10/lowlight/Run1546_M2_low_light_fits.pkl
+Run 1546: Generating veto plots AFTER cuts...
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1546_20250916-10/histograms/1546_M2_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1546_20250916-10/histograms/1546_M2_veto_efficiency.pkl
+Run 1546: after NaN drop: 268468 events
+Run 1546: after Δt cut: 5198 events
+Run 1546: after total_pe cut: 5157 events
+Run 1546: after time-std < 40.0 ns cut: 5157 events
+Correlation map saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1546_20250916-10/cuthist/Run_1546_M2_correlation_map.png
+SiPM histograms saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1546_20250916-10/Run_1546_M2_sipm_area_histograms.png
+SiPM histogram data saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1546_20250916-10/Run_1546_M2_sipm_area_histograms.pkl
+--- Processing run 1547 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1547_20250916-11/lowlight/Run1547_M2_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1547_20250916-11/lowlight/Run1547_M2_low_light_fits.pkl
+Run 1547: Generating veto plots AFTER cuts...
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1547_20250916-11/histograms/1547_M2_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1547_20250916-11/histograms/1547_M2_veto_efficiency.pkl
+Run 1547: after NaN drop: 269176 events
+Run 1547: after Δt cut: 5258 events
+Run 1547: after total_pe cut: 5200 events
+Run 1547: after time-std < 40.0 ns cut: 5200 events
+Correlation map saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1547_20250916-11/cuthist/Run_1547_M2_correlation_map.png
+SiPM histograms saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1547_20250916-11/Run_1547_M2_sipm_area_histograms.png
+SiPM histogram data saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/run1547_20250916-11/Run_1547_M2_sipm_area_histograms.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/Runs_1546_1547_M2_veto_efficiency_agg.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M2_data/analysis_1544-1548_M2_20250916-135346/subjob_1546-1547/Runs_1546_1547_M2_veto_efficiency_agg.pkl
+--- Generating Aggregated Thin Veto Comparison Plots ---
+Saving aggregated data for sub-job 1546-1547...
+Successfully saved data for master aggregation.
+--- Sub-job Analysis Complete ---

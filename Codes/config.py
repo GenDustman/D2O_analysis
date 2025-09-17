@@ -39,7 +39,7 @@ SIPM_HIST_CONFIG = {
     'hist_bins': 100,
     'hist_range': (-50, 4000) # (min_adc, max_adc)
 }
-# --- Thin Veto (Ch 20, 21) Performance Analysis ---
+# --- Veto Performance Analysis ---
 PERFORM_THIN_VETO_ANALYSIS = True
 THIN_VETO_CHANNELS = [12, 13] # List of channels to analyze
 THIN_VETO_THRESHOLD = 30.0       # Threshold for the veto panels in the list
@@ -49,5 +49,5 @@ THIN_VETO_HIST_CONFIG = {
     'height_bins': 100,
     'height_range': (0, 1000),
     'area_bins': 100,
-    'area_range': (0, 5000),
+    'area_range': (0, 10000),
 }

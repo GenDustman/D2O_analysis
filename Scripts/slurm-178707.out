@@ -1,3 +1,0 @@
-/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
-  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
-slurmstepd: error: *** JOB 178707 ON qcdcomp-1-7 CANCELLED AT 2025-08-19T11:50:06 ***

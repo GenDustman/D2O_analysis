@@ -1,9 +1,0 @@
-Master output will be saved to: /raid1/genli/Data_D2O/M2_data/analysis_573-574_M2_20250819-111542/MASTER_RESULTS
-Found 2 sub-job directories to aggregate.
-Processing subjob_573-573...
-Processing subjob_574-574...
-SiPM histograms saved to /raid1/genli/Data_D2O/M2_data/analysis_573-574_M2_20250819-111542/MASTER_RESULTS/Master_Runs_573_574_M2_sipm_area_histograms.png
-SiPM histogram data saved to /raid1/genli/Data_D2O/M2_data/analysis_573-574_M2_20250819-111542/MASTER_RESULTS/Master_Runs_573_574_M2_sipm_area_histograms.pkl
-Aggregating Thin Veto data...
-
---- Master Aggregation Complete ---

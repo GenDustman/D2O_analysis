@@ -10,8 +10,8 @@
 SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 
 # Hardcoded Run Parameters
-start_run=396
-end_run=397
+start_run=1544
+end_run=1548
 M1_or_M2="M2"
 njobs=3
 
