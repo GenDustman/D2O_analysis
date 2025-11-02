@@ -10,13 +10,13 @@
 SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 
 # Hardcoded Run Parameters
-start_run=1544
-end_run=1548
-M1_or_M2="M2"
-njobs=3
+start_run=25306
+end_run=26233
+M1_or_M2="M1"
+njobs=50
 
 # Data Directories
-DATA_BASE_DIR="/raid1/genli/Data_D2O/M1_data"
+DATA_BASE_DIR="/raid1/genli/Data_D2O/M1_data/BRN"
 if [ "$M1_or_M2" == "M2" ]; then
     DATA_BASE_DIR="/raid1/genli/Data_D2O/M2_data"
 fi

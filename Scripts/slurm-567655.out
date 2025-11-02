@@ -1,0 +1,253 @@
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/D2O_analysis/Codes/Read_Cut_Hist_D2O_multi_veto.py:411: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/D2O_analysis/Codes/Read_Cut_Hist_D2O_multi_veto.py:411: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/D2O_analysis/Codes/Read_Cut_Hist_D2O_multi_veto.py:411: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/D2O_analysis/Codes/Read_Cut_Hist_D2O_multi_veto.py:411: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/D2O_analysis/Codes/Read_Cut_Hist_D2O_multi_veto.py:411: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/D2O_analysis/Codes/Read_Cut_Hist_D2O_multi_veto.py:411: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/D2O_analysis/Codes/Read_Cut_Hist_D2O_multi_veto.py:411: UserWarning: Data has no positive values, and therefore cannot be log-scaled.
+  ax.set_yscale('log')
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+=== Configuration ===
+Analysis type: M1
+Runs: 25933 to 25951
+Output Directory for this job: /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951
+Δt cut: (960, 10560) ns
+Photoelectron cut: (0, 2000) P.E.
+Time-std cut: < 40.0 ns
+======================
+--- Processing run 25933 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25933_20250926-23/lowlight/Run25933_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25933_20250926-23/lowlight/Run25933_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25933_20250926-23/histograms/25933_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25933_20250926-23/histograms/25933_M1_veto_efficiency.pkl
+Run 25933: after NaN drop: 19376 events
+Run 25933: after Δt cut: 9318 events
+Run 25933: after total_pe cut: 9316 events
+Run 25933: after time-std < 40.0 ns cut: 9316 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25933_20250926-23/cuthist/Run_25933_M1_correlation_map.png
+--- Processing run 25934 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25934_20250927-00/lowlight/Run25934_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25934_20250927-00/lowlight/Run25934_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25934_20250927-00/histograms/25934_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25934_20250927-00/histograms/25934_M1_veto_efficiency.pkl
+Run 25934: after NaN drop: 19336 events
+Run 25934: after Δt cut: 9221 events
+Run 25934: after total_pe cut: 9220 events
+Run 25934: after time-std < 40.0 ns cut: 9220 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25934_20250927-00/cuthist/Run_25934_M1_correlation_map.png
+--- Processing run 25935 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25935_20250927-01/lowlight/Run25935_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25935_20250927-01/lowlight/Run25935_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25935_20250927-01/histograms/25935_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25935_20250927-01/histograms/25935_M1_veto_efficiency.pkl
+Run 25935: after NaN drop: 19318 events
+Run 25935: after Δt cut: 9274 events
+Run 25935: after total_pe cut: 9272 events
+Run 25935: after time-std < 40.0 ns cut: 9272 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25935_20250927-01/cuthist/Run_25935_M1_correlation_map.png
+--- Processing run 25936 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25936_20250927-02/lowlight/Run25936_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25936_20250927-02/lowlight/Run25936_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25936_20250927-02/histograms/25936_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25936_20250927-02/histograms/25936_M1_veto_efficiency.pkl
+Run 25936: after NaN drop: 19184 events
+Run 25936: after Δt cut: 9188 events
+Run 25936: after total_pe cut: 9188 events
+Run 25936: after time-std < 40.0 ns cut: 9188 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25936_20250927-02/cuthist/Run_25936_M1_correlation_map.png
+--- Processing run 25937 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25937_20250927-03/lowlight/Run25937_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25937_20250927-03/lowlight/Run25937_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25937_20250927-03/histograms/25937_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25937_20250927-03/histograms/25937_M1_veto_efficiency.pkl
+Run 25937: after NaN drop: 19319 events
+Run 25937: after Δt cut: 9273 events
+Run 25937: after total_pe cut: 9273 events
+Run 25937: after time-std < 40.0 ns cut: 9273 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25937_20250927-03/cuthist/Run_25937_M1_correlation_map.png
+--- Processing run 25938 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25938_20250927-04/lowlight/Run25938_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25938_20250927-04/lowlight/Run25938_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25938_20250927-04/histograms/25938_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25938_20250927-04/histograms/25938_M1_veto_efficiency.pkl
+Run 25938: after NaN drop: 19198 events
+Run 25938: after Δt cut: 9207 events
+Run 25938: after total_pe cut: 9207 events
+Run 25938: after time-std < 40.0 ns cut: 9207 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25938_20250927-04/cuthist/Run_25938_M1_correlation_map.png
+--- Processing run 25939 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25939_20250927-05/lowlight/Run25939_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25939_20250927-05/lowlight/Run25939_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25939_20250927-05/histograms/25939_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25939_20250927-05/histograms/25939_M1_veto_efficiency.pkl
+Run 25939: after NaN drop: 19249 events
+Run 25939: after Δt cut: 9270 events
+Run 25939: after total_pe cut: 9269 events
+Run 25939: after time-std < 40.0 ns cut: 9269 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25939_20250927-05/cuthist/Run_25939_M1_correlation_map.png
+--- Processing run 25940 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25940_20250927-06/lowlight/Run25940_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25940_20250927-06/lowlight/Run25940_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25940_20250927-06/histograms/25940_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25940_20250927-06/histograms/25940_M1_veto_efficiency.pkl
+Run 25940: after NaN drop: 19170 events
+Run 25940: after Δt cut: 9118 events
+Run 25940: after total_pe cut: 9117 events
+Run 25940: after time-std < 40.0 ns cut: 9117 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25940_20250927-06/cuthist/Run_25940_M1_correlation_map.png
+--- Processing run 25941 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25941_20250927-07/lowlight/Run25941_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25941_20250927-07/lowlight/Run25941_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25941_20250927-07/histograms/25941_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25941_20250927-07/histograms/25941_M1_veto_efficiency.pkl
+Run 25941: after NaN drop: 19333 events
+Run 25941: after Δt cut: 9276 events
+Run 25941: after total_pe cut: 9275 events
+Run 25941: after time-std < 40.0 ns cut: 9275 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25941_20250927-07/cuthist/Run_25941_M1_correlation_map.png
+--- Processing run 25942 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25942_20250927-08/lowlight/Run25942_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25942_20250927-08/lowlight/Run25942_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25942_20250927-08/histograms/25942_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25942_20250927-08/histograms/25942_M1_veto_efficiency.pkl
+Run 25942: after NaN drop: 19311 events
+Run 25942: after Δt cut: 9364 events
+Run 25942: after total_pe cut: 9362 events
+Run 25942: after time-std < 40.0 ns cut: 9362 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25942_20250927-08/cuthist/Run_25942_M1_correlation_map.png
+--- Processing run 25943 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25943_20250927-09/lowlight/Run25943_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25943_20250927-09/lowlight/Run25943_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25943_20250927-09/histograms/25943_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25943_20250927-09/histograms/25943_M1_veto_efficiency.pkl
+Run 25943: after NaN drop: 19143 events
+Run 25943: after Δt cut: 9115 events
+Run 25943: after total_pe cut: 9112 events
+Run 25943: after time-std < 40.0 ns cut: 9112 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25943_20250927-09/cuthist/Run_25943_M1_correlation_map.png
+--- Processing run 25944 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25944_20250927-10/lowlight/Run25944_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25944_20250927-10/lowlight/Run25944_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25944_20250927-10/histograms/25944_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25944_20250927-10/histograms/25944_M1_veto_efficiency.pkl
+Run 25944: after NaN drop: 19149 events
+Run 25944: after Δt cut: 9041 events
+Run 25944: after total_pe cut: 9041 events
+Run 25944: after time-std < 40.0 ns cut: 9041 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25944_20250927-10/cuthist/Run_25944_M1_correlation_map.png
+--- Processing run 25945 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25945_20250927-11/lowlight/Run25945_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25945_20250927-11/lowlight/Run25945_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25945_20250927-11/histograms/25945_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25945_20250927-11/histograms/25945_M1_veto_efficiency.pkl
+Run 25945: after NaN drop: 19119 events
+Run 25945: after Δt cut: 9099 events
+Run 25945: after total_pe cut: 9098 events
+Run 25945: after time-std < 40.0 ns cut: 9098 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25945_20250927-11/cuthist/Run_25945_M1_correlation_map.png
+--- Processing run 25946 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25946_20250927-12/lowlight/Run25946_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25946_20250927-12/lowlight/Run25946_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25946_20250927-12/histograms/25946_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25946_20250927-12/histograms/25946_M1_veto_efficiency.pkl
+Run 25946: after NaN drop: 19095 events
+Run 25946: after Δt cut: 9097 events
+Run 25946: after total_pe cut: 9096 events
+Run 25946: after time-std < 40.0 ns cut: 9096 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25946_20250927-12/cuthist/Run_25946_M1_correlation_map.png
+--- Processing run 25947 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25947_20250927-13/lowlight/Run25947_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25947_20250927-13/lowlight/Run25947_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25947_20250927-13/histograms/25947_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25947_20250927-13/histograms/25947_M1_veto_efficiency.pkl
+Run 25947: after NaN drop: 19438 events
+Run 25947: after Δt cut: 9285 events
+Run 25947: after total_pe cut: 9283 events
+Run 25947: after time-std < 40.0 ns cut: 9283 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25947_20250927-13/cuthist/Run_25947_M1_correlation_map.png
+--- Processing run 25948 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25948_20250927-14/lowlight/Run25948_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25948_20250927-14/lowlight/Run25948_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25948_20250927-14/histograms/25948_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25948_20250927-14/histograms/25948_M1_veto_efficiency.pkl
+Run 25948: after NaN drop: 19159 events
+Run 25948: after Δt cut: 9138 events
+Run 25948: after total_pe cut: 9137 events
+Run 25948: after time-std < 40.0 ns cut: 9137 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25948_20250927-14/cuthist/Run_25948_M1_correlation_map.png
+--- Processing run 25949 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25949_20250927-15/lowlight/Run25949_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25949_20250927-15/lowlight/Run25949_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25949_20250927-15/histograms/25949_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25949_20250927-15/histograms/25949_M1_veto_efficiency.pkl
+Run 25949: after NaN drop: 19353 events
+Run 25949: after Δt cut: 9168 events
+Run 25949: after total_pe cut: 9164 events
+Run 25949: after time-std < 40.0 ns cut: 9164 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25949_20250927-15/cuthist/Run_25949_M1_correlation_map.png
+--- Processing run 25950 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25950_20250927-16/lowlight/Run25950_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25950_20250927-16/lowlight/Run25950_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25950_20250927-16/histograms/25950_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25950_20250927-16/histograms/25950_M1_veto_efficiency.pkl
+Run 25950: after NaN drop: 19432 events
+Run 25950: after Δt cut: 9301 events
+Run 25950: after total_pe cut: 9301 events
+Run 25950: after time-std < 40.0 ns cut: 9301 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25950_20250927-16/cuthist/Run_25950_M1_correlation_map.png
+--- Processing run 25951 ---
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25951_20250927-17/lowlight/Run25951_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25951_20250927-17/lowlight/Run25951_M1_low_light_fits.pkl
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25951_20250927-17/histograms/25951_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25951_20250927-17/histograms/25951_M1_veto_efficiency.pkl
+Run 25951: after NaN drop: 18803 events
+Run 25951: after Δt cut: 9151 events
+Run 25951: after total_pe cut: 9150 events
+Run 25951: after time-std < 40.0 ns cut: 9150 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056/subjob_25933-25951/run25951_20250927-17/cuthist/Run_25951_M1_correlation_map.png
+Saving aggregated data for sub-job 25933-25951...
+Successfully saved data for master aggregation.
+--- Sub-job Analysis Complete ---
