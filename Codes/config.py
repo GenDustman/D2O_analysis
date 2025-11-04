@@ -64,10 +64,10 @@ THIN_VETO_HIST_CONFIG = {
 # --- BRN (Beam-Related Neutron) Analysis ---
 PERFORM_BRN_ANALYSIS = True
 BRN_DELTA_T_RANGE = (0, 5000)   # (ns) Time window to plot BRN delta_t
-BRN_DELTA_T_BIN_WIDTH_NS = 128    # Δt bin width for BRN analysis, must be multiple of TIME_TICK_NS
+BRN_DELTA_T_BIN_WIDTH_NS = 256    # Δt bin width for BRN analysis, must be multiple of TIME_TICK_NS
 BRN_SIPM_THRESHOLD_ADC = 30.0     # PulseH threshold for a SiPM channel to be "triggered"
 BRN_SIPM_CHANNELS = list(range(12, 22)) # Channels 12-21
 BRN_HIST_CONFIG = {
-    'area_bins': 100,
+    'area_bins': 50,
     'area_range': (-50, 4000) # (min_adc, max_adc)
 }

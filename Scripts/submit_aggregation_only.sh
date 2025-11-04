@@ -13,7 +13,7 @@ SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 
 # 2. Set the absolute path to the top-level analysis folder
 #    (This is the folder that contains all the 'subjob_*' directories)
-ANALYSIS_DIR="/raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251027-221930"
+ANALYSIS_DIR="/raid1/genli/Data_D2O/M1_data/BRN/analysis_25306-26233_M1_20251030-013056"
 
 # 3. (Optional) Set a Job Name and Memory Request
 #    Given the previous MemoryError, requesting more memory is a good idea.

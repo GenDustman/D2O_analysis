@@ -379,7 +379,7 @@ class BRNAnalyzer:
                 ax.set_title(f'Channel {ch}')
                 ax.set_xlabel('Δt (ns)')
                 ax.set_ylabel('Events')
-                ax.set_yscale('log')
+                # ax.set_yscale('log')
                 ax.grid(True)
             else:
                 ax.text(0.5, 0.5, f'Ch {ch}\nNo Data', ha='center', va='center', transform=ax.transAxes)
@@ -408,7 +408,7 @@ class BRNAnalyzer:
                 ax.set_title(f'Channel {ch}')
                 ax.set_xlabel('Area (ADC)')
                 ax.set_ylabel('Events')
-                ax.set_yscale('log')
+                # ax.set_yscale('log')
                 ax.grid(True)
             else:
                 ax.text(0.5, 0.5, f'Ch {ch}\nNo Data', ha='center', va='center', transform=ax.transAxes)
