@@ -377,6 +377,8 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
         output_dir / f"aggregated_delta_t_{m1_or_m2}.png",
         f"Aggregated Delta T {agg_label}", "Delta T (ns)", m1_or_m2, logscale_dt
     )
+    if do_tau_fit:
+        fit_window = config.TAU_FIT_WINDOW
     
     # PE histogram
     pe_edges = hist_calc.bin_edges_from_spec(bins, pe_data, pe_cut)
@@ -765,7 +767,7 @@ class MasterAggregator:
                     ax.set_xlabel('Delta_t (ns)')
                     ax.set_ylabel('Events')
                     ax.grid(True, which='both', linestyle=':')
-                    ax.set_yscale('log')
+                    # ax.set_yscale('log')
                     ax.set_xlim(delta_t_range)
                     ax.legend()
                 else:
@@ -813,7 +815,7 @@ class MasterAggregator:
                     ax.set_xlabel('Area (ADC)')
                     ax.set_ylabel('Events')
                     ax.grid(True, which='both', linestyle=':')
-                    ax.set_yscale('log')
+                    # ax.set_yscale('log')
                     ax.set_xlim(area_range)
                     ax.legend()
                 else:

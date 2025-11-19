@@ -15,10 +15,13 @@ aggregator (aggregate_master.py) will import their settings from here.
 # N_JOBS = 30
 
 # --- Run & Directory Configuration ---
-DATA_DIR_M1 = "/raid1/genli/Data_D2O/M1_data/BRN"
+DATA_DIR_M1 = "/raid1/genli/Data_D2O/M1_data"
 DATA_DIR_M2 = "/raid1/genli/Data_D2O/M2_data"
 # --- Cut & Binning Configuration ---
-DELTA_T_CUT = (960, 10560)      # (min_ns, max_ns)
+TIME_INTERVAL_CUT_NS = 2000  # Pile-up cut in ns
+muon_life = 2197  # Muon lifetime in ns
+DELTA_T_CUT = (8*muon_life, 1000*muon_life)      # (min_ns, max_ns)
+# DELTA_T_CUT = (960, 10560)      # (min_ns, max_ns)
 PE_CUT = (0, 2000)             # (min_pe, max_pe)
 TIME_STD_CUT = 2.5 * 16        # Max standard deviation of PMT hit times in an event (ns)
 MULTIPLICITY_SPE = 1.0         # P.E. threshold to count a PMT as "hit"
@@ -31,7 +34,7 @@ DELTA_T_BIN_WIDTH_NS = 160         # Δt bin width; choose k*TIME_TICK_NS (e.g.,
 DELTA_T_LEFT_EDGE_NS = 0
 
 # --- Histogram & Plotting Configuration ---
-BINS = 50                    # or 'auto' or keep an int like 100
+BINS = 1000                     # or 'auto' or keep an int like 100
 VETO_BINS = 20                 # Bin count for veto efficiency plots
 VETO_RANGE = (900, 2000)       # P.E. range for plotting veto efficiency
 LOGSCALE_PE_AGG = False        # Use log scale for the aggregated P.E. y-axis
@@ -49,10 +52,9 @@ SIPM_HIST_CONFIG = {
     'hist_range': (-50, 4000) # (min_adc, max_adc)
 }
 # --- Veto Performance Analysis ---
-PERFORM_THIN_VETO_ANALYSIS = True
-THIN_VETO_CHANNELS = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21]   # List of channels to analyze
+PERFORM_THIN_VETO_ANALYSIS = False
+THIN_VETO_CHANNELS = [12, 13, 14, 15]   # List of channels to analyze
 THIN_VETO_THRESHOLD = 30.0       # Threshold for the veto panels in the list
-# ADJ_CH_THRESHOLD is no longer used.
 
 THIN_VETO_HIST_CONFIG = {
     'height_bins': 100,
@@ -62,12 +64,12 @@ THIN_VETO_HIST_CONFIG = {
 }
 
 # --- BRN (Beam-Related Neutron) Analysis ---
-PERFORM_BRN_ANALYSIS = True
-BRN_DELTA_T_RANGE = (0, 5000)   # (ns) Time window to plot BRN delta_t
-BRN_DELTA_T_BIN_WIDTH_NS = 256    # Δt bin width for BRN analysis, must be multiple of TIME_TICK_NS
+PERFORM_BRN_ANALYSIS = False
+BRN_DELTA_T_RANGE = (0, 4000)   # (ns) Time window to plot BRN delta_t
+BRN_DELTA_T_BIN_WIDTH_NS = 64    # Δt bin width for BRN analysis, must be multiple of TIME_TICK_NS
 BRN_SIPM_THRESHOLD_ADC = 30.0     # PulseH threshold for a SiPM channel to be "triggered"
 BRN_SIPM_CHANNELS = list(range(12, 22)) # Channels 12-21
 BRN_HIST_CONFIG = {
-    'area_bins': 50,
+    'area_bins': 100,
     'area_range': (-50, 4000) # (min_adc, max_adc)
 }

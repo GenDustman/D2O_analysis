@@ -375,7 +375,16 @@ class BRNAnalyzer:
         for i, ch in enumerate(channels_to_analyze):
             ax = axes_dt[i]
             if ch in channel_data and channel_data[ch]['delta_t'].size > 0:
-                ax.hist(channel_data[ch]['delta_t'], bins=dt_bins, histtype='step', linewidth=1.5)
+                errs = np.sqrt(len(channel_data[ch]['delta_t']))
+                centers = 0.5 * (dt_bins[:-1] + dt_bins[1:])
+                # ax.hist(channel_data[ch]['delta_t'], bins=dt_bins, histtype='step', linewidth=1.5)
+                ax.errorbar(
+                    centers,
+                    np.histogram(channel_data[ch]['delta_t'], bins=dt_bins)[0],
+                    yerr=errs,
+                    fmt='o', markersize=2, capsize=2,
+                    alpha=0.7
+                )
                 ax.set_title(f'Channel {ch}')
                 ax.set_xlabel('Δt (ns)')
                 ax.set_ylabel('Events')
@@ -404,7 +413,16 @@ class BRNAnalyzer:
         for i, ch in enumerate(channels_to_analyze):
             ax = axes_area[i]
             if ch in channel_data and channel_data[ch]['area'].size > 0:
-                ax.hist(channel_data[ch]['area'], bins=area_bin_edges, histtype='step', linewidth=1.5)
+                errs = np.sqrt(len(channel_data[ch]['area']))
+                centers = 0.5 * (area_bin_edges[:-1] + area_bin_edges[1:])
+                # ax.hist(channel_data[ch]['area'], bins=area_bin_edges, histtype='step', linewidth=1.5)
+                ax.errorbar(
+                    centers,
+                    np.histogram(channel_data[ch]['area'], bins=area_bin_edges)[0],
+                    yerr=errs,
+                    fmt='o', markersize=2, capsize=2,
+                    alpha=0.7
+                )
                 ax.set_title(f'Channel {ch}')
                 ax.set_xlabel('Area (ADC)')
                 ax.set_ylabel('Events')
@@ -430,7 +448,7 @@ class Plotter:
 
     def plot_histogram(self, arrays, labels, bins, img_path, title, xlabel,
                        M1_or_M2, logscale=True, figsize=(10, 6)):
-        """Plot one or more datasets as overlapping histograms, with consistent styling."""
+        """Plot one or more datasets as overlapping histograms with Poissonic error bars."""
         plt.figure(figsize=figsize)
         outputs = []
 
@@ -450,12 +468,15 @@ class Plotter:
 
         for data, label in zip(arrays, labels):
             if data is not None and getattr(data, "size", 0) > 0:
-                counts, edges, _ = plt.hist(
-                    data,
-                    bins=edges_final,
-                    alpha=0.7,
-                    edgecolor='black',
-                    label=f"{label} (N={len(data)})"
+                counts, edges = np.histogram(data, bins=edges_final)
+                bin_centers = 0.5 * (edges[:-1] + edges[1:])
+                errors = np.sqrt(counts)
+                
+                plt.errorbar(
+                    bin_centers, counts, yerr=errors,
+                    fmt='o', markersize=4, capsize=3,
+                    label=f"{label} (N={len(data)})",
+                    alpha=0.7
                 )
                 outputs.append((counts, edges))
             else:
@@ -481,7 +502,8 @@ class Plotter:
             centers = 0.5 * (edges0[:-1] + edges0[1:])
             pickle_data = {
                 'centers': centers,
-                'histograms': {label: counts for label, (counts, _) in zip(labels, outputs)}
+                'histograms': {label: counts for label, (counts, _) in zip(labels, outputs)},
+                'errors': {label: np.sqrt(counts) for label, (counts, _) in zip(labels, outputs)}
             }
             self.file_handler.save_pickle(pickle_data, pkl_path)
         plt.close()
@@ -717,6 +739,25 @@ class RunProcessor:
         
         # Calculate derived quantities
         df_all = self._calculate_derived_quantities(df_all, mu1_values_run, multiplicity_spe)
+        # Check if the cut is enabled (set to > 0)
+        if config.TIME_INTERVAL_CUT_NS > 0:
+            print(f"Applying {config.TIME_INTERVAL_CUT_NS} ns time interval cut...")
+            original_event_count = len(df_all)
+            
+            # Calculate the time difference from the previous event
+            time_diff_ns = df_all['nsTime'].diff()
+            
+            # Create a mask to KEEP events.
+            # We keep an event if:
+            # 1. The time diff is >= the cut
+            # 2. The time diff is NaN (this is the first event, which we explicitly keep)
+            time_interval_mask = (time_diff_ns >= config.TIME_INTERVAL_CUT_NS) | (time_diff_ns.isna())
+            
+            # Apply the mask to the main DataFrame
+            df_all = df_all[time_interval_mask]
+            
+            print(f"Time interval cut: Kept {len(df_all)} / {original_event_count} events")
+        # >>> END: NEW TIME INTERVAL CUT <<<
         
         # Save processed data
         df_all.to_pickle(run_dir / f"run{run}_{M1_or_M2}_data_with_pe.pkl")
