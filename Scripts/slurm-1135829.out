@@ -1,0 +1,28 @@
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+=== Configuration ===
+Analysis type: M1
+Runs: 14985 to 14985
+Output Directory for this job: /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14985-14985
+Δt cut: (2197, 10985) ns
+Photoelectron cut: (0, 1000) P.E.
+Time-std cut: < 40.0 ns
+======================
+--- Processing run 14985 ---
+Length of time: 3597974746352.0 ns
+Length of time: 59.96624577253333 minutes
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14985-14985/run14985_20240601-07/lowlight/Run14985_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14985-14985/run14985_20240601-07/lowlight/Run14985_M1_low_light_fits.pkl
+Applying 2000 ns time interval cut...
+Time interval cut: Kept 2374783 / 2396333 events
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14985-14985/run14985_20240601-07/histograms/14985_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14985-14985/run14985_20240601-07/histograms/14985_M1_veto_efficiency.pkl
+Run 14985: after NaN drop: 8921 events
+Run 14985: after Δt cut: 5226 events
+Run 14985: after total_pe cut: 5223 events
+Run 14985: after time-std < 40.0 ns cut: 5223 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14985-14985/run14985_20240601-07/cuthist/Run_14985_M1_correlation_map.png
+Saving aggregated data for sub-job 14985-14985...
+Sub-job time length saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14985-14985/subjob_time_length.json
+Successfully saved data for master aggregation.
+--- Sub-job Analysis Complete ---

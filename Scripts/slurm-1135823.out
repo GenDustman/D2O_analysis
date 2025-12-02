@@ -1,0 +1,28 @@
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+=== Configuration ===
+Analysis type: M1
+Runs: 14979 to 14979
+Output Directory for this job: /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14979-14979
+Δt cut: (2197, 10985) ns
+Photoelectron cut: (0, 1000) P.E.
+Time-std cut: < 40.0 ns
+======================
+--- Processing run 14979 ---
+Length of time: 3597972884064.0 ns
+Length of time: 59.9662147344 minutes
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14979-14979/run14979_20240601-01/lowlight/Run14979_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14979-14979/run14979_20240601-01/lowlight/Run14979_M1_low_light_fits.pkl
+Applying 2000 ns time interval cut...
+Time interval cut: Kept 2390115 / 2411508 events
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14979-14979/run14979_20240601-01/histograms/14979_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14979-14979/run14979_20240601-01/histograms/14979_M1_veto_efficiency.pkl
+Run 14979: after NaN drop: 9013 events
+Run 14979: after Δt cut: 5307 events
+Run 14979: after total_pe cut: 5300 events
+Run 14979: after time-std < 40.0 ns cut: 5300 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14979-14979/run14979_20240601-01/cuthist/Run_14979_M1_correlation_map.png
+Saving aggregated data for sub-job 14979-14979...
+Sub-job time length saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-14986_M1_20251124-161506/subjob_14979-14979/subjob_time_length.json
+Successfully saved data for master aggregation.
+--- Sub-job Analysis Complete ---

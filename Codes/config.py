@@ -17,12 +17,14 @@ aggregator (aggregate_master.py) will import their settings from here.
 # --- Run & Directory Configuration ---
 DATA_DIR_M1 = "/raid1/genli/Data_D2O/M1_data"
 DATA_DIR_M2 = "/raid1/genli/Data_D2O/M2_data"
+suffix_M1 = "_processed_v4.root"
+suffix_M2 = "_processed_H2O_v5.root"
 # --- Cut & Binning Configuration ---
 TIME_INTERVAL_CUT_NS = 2000  # Pile-up cut in ns
 muon_life = 2197  # Muon lifetime in ns
-DELTA_T_CUT = (8*muon_life, 1000*muon_life)      # (min_ns, max_ns)
+DELTA_T_CUT = (muon_life, 5*muon_life)      # (min_ns, max_ns)
 # DELTA_T_CUT = (960, 10560)      # (min_ns, max_ns)
-PE_CUT = (0, 2000)             # (min_pe, max_pe)
+PE_CUT = (0, 1000)             # (min_pe, max_pe)
 TIME_STD_CUT = 2.5 * 16        # Max standard deviation of PMT hit times in an event (ns)
 MULTIPLICITY_SPE = 1.0         # P.E. threshold to count a PMT as "hit"
 MULTIPLICITY_CUT = 10          # Minimum number of hit PMTs for an event

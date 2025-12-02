@@ -22,6 +22,7 @@ MODIFICATION:
 import sys
 from pathlib import Path
 import pickle
+import json
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -639,9 +640,9 @@ class RunProcessor:
         
         # Determine input file path
         if M1_or_M2 == 'M1':
-            infile = data_dir / f"run{run}_processed_v5.root"
+            infile = data_dir / (f"run{run}" + config.suffix_M1)
         elif M1_or_M2 == 'M2':
-            infile = data_dir / f"run{run}_processed_H2O_v5.root"
+            infile = data_dir / (f"run{run}" + config.suffix_M2)
         else:
             raise ValueError("M1_or_M2 must be 'M1' or 'M2'")
             
@@ -666,13 +667,31 @@ class RunProcessor:
         for dir_path in [hist_dir, cut_dir, ll_dir]:
             self.file_handler.ensure_dir(dir_path)
 
+        # Calculate time length and save to file
+        timelength = 0.0
+        if 'nsTime' in df_all.columns and not df_all.empty:
+            time_values = df_all['nsTime'].values
+            timelength = float(np.max(time_values) - np.min(time_values))
+            length_seconds = timelength / 1e9
+            length_min = timelength / 1e9 / 60
+            print("Length of time:", timelength, "ns")
+            print("Length of time:", length_min, "minutes")
+            
+            time_data = {
+                "timelength_ns": timelength,
+                "timelength_s": length_seconds,
+                "timelength_min": length_min
+            }
+            with open(run_dir / "time_length.json", "w") as f:
+                json.dump(time_data, f, indent=4)
+
         # Process data and generate outputs
         result = self._process_run_data(df_all, run, run_dir, hist_dir, cut_dir, ll_dir,
                                       delta_t_cut, pe_cut, bins, veto_bins, vetorange,
                                       multiplicity_spe, multiplicity_cut, time_std_cut,
                                       logscale, low_light_fit_range, M1_or_M2)
         
-        return result
+        return result, timelength
 
     def _get_run_start_time(self, infile, run):
         """Extract run start time from ROOT file."""
@@ -1128,23 +1147,28 @@ def main():
     }
     ll_bin_edges_agg = None
     tv_bin_edges_agg = None
+    total_subjob_timelength_ns = 0.0
 
     # Process runs
     for run in range(start_run, end_run + 1):
         try:
-            result = processor.process_run(
+            result_tuple = processor.process_run(
                 run, data_dir, output_dir, config.DELTA_T_CUT, config.PE_CUT, 
                 config.BINS, config.VETO_BINS, config.VETO_RANGE,
                 0.5, config.MULTIPLICITY_CUT, config.TIME_STD_CUT, True,
                 config.LOW_LIGHT_FIT_RANGE, {}, M1_or_M2
             )
             
-            if result:
-                (dt_vals, pe_vals, mult_vals,
-                 ll_hists, ll_edges,
-                 sipm_df, pe_2, pe_2_or_34,
-                 tv_hists, tv_edges,
-                 brn_data) = result
+            if result_tuple:
+                result, run_timelength = result_tuple
+                total_subjob_timelength_ns += run_timelength
+                
+                if result:
+                    (dt_vals, pe_vals, mult_vals,
+                     ll_hists, ll_edges,
+                     sipm_df, pe_2, pe_2_or_34,
+                     tv_hists, tv_edges,
+                     brn_data) = result
                 
                 if dt_vals is not None: 
                     aggregated['delta_t'].append(dt_vals)
@@ -1224,6 +1248,16 @@ def main():
         if config.PERFORM_BRN_ANALYSIS and aggregated['brn_channel_data']:
             with open(output_dir / 'aggregated_brn_channel_data.pkl', 'wb') as f:
                 pickle.dump(aggregated['brn_channel_data'], f)
+        
+        # Save sub-job time length
+        subjob_time_data = {
+            "timelength_ns": total_subjob_timelength_ns,
+            "timelength_s": total_subjob_timelength_ns / 1e9,
+            "timelength_min": total_subjob_timelength_ns / 1e9 / 60.0
+        }
+        with open(output_dir / "subjob_time_length.json", "w") as f:
+            json.dump(subjob_time_data, f, indent=4)
+        print(f"Sub-job time length saved to {output_dir / 'subjob_time_length.json'}")
             
         print("Successfully saved data for master aggregation.")
 

@@ -12,6 +12,7 @@ import pandas as pd
 import pickle
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+import json
 
 # Import configuration
 import config
@@ -469,6 +470,11 @@ class MasterAggregator:
         self.master_tv_no_co_a_counts = None
         self.tv_data_found = False
 
+        # Time length data
+        self.total_timelength_ns = 0.0
+        self.total_timelength_s = 0.0
+        self.total_timelength_min = 0.0
+
     def _load_all_subjob_data(self):
         """Loops over all sub-job directories and populates the master containers."""
         for sub_dir in self.subjob_dirs:
@@ -480,6 +486,7 @@ class MasterAggregator:
             self._load_low_light_data(sub_dir)
             self._load_thin_veto_data(sub_dir)
             self._load_brn_data(sub_dir)
+            self._load_time_length_data(sub_dir)
 
     def _load_main_arrays(self, sub_dir):
         """Load main numpy arrays (delta_t, total_pe, multiplicity)."""
@@ -594,6 +601,50 @@ class MasterAggregator:
                     self.all_brn_data.extend(pickle.load(f))
             except Exception as e:
                 print(f"Warning: Could not load BRN data from {sub_dir.name}. Error: {e}")
+
+    def _load_time_length_data(self, sub_dir):
+        """Load and sum time length data from sub-job directory."""
+        json_file = sub_dir / "subjob_time_length.json"
+        if json_file.exists():
+            try:
+                with open(json_file, 'r') as f:
+                    data = json.load(f)
+                    self.total_timelength_ns += data.get("timelength_ns", 0.0)
+                    self.total_timelength_s += data.get("timelength_s", 0.0)
+                    self.total_timelength_min += data.get("timelength_min", 0.0)
+            except Exception as e:
+                print(f"  Warning: Could not read time length from {json_file}. Error: {e}")
+        else:
+            # Fallback to summing individual runs if subjob file doesn't exist
+            print(f"  Warning: {json_file} not found. Falling back to summing individual runs.")
+            for run_dir in sub_dir.glob("run*"):
+                if run_dir.is_dir():
+                    run_json_file = run_dir / "time_length.json"
+                    if run_json_file.exists():
+                        try:
+                            with open(run_json_file, 'r') as f:
+                                data = json.load(f)
+                                self.total_timelength_ns += data.get("timelength_ns", 0.0)
+                                self.total_timelength_s += data.get("timelength_s", 0.0)
+                                self.total_timelength_min += data.get("timelength_min", 0.0)
+                        except Exception as e:
+                            print(f"  Warning: Could not read time length from {run_json_file}. Error: {e}")
+
+    def _save_total_time_length(self):
+        """Save the total aggregated time length."""
+        data = {
+            "total_timelength_ns": self.total_timelength_ns,
+            "total_timelength_s": self.total_timelength_s,
+            "total_timelength_min": self.total_timelength_min,
+            "total_timelength_hours": self.total_timelength_min / 60.0,
+            "total_timelength_days": self.total_timelength_min / (60.0 * 24.0)
+        }
+        output_file = self.master_output_dir / "total_time_length.json"
+        with open(output_file, 'w') as f:
+            json.dump(data, f, indent=4)
+        print(f"Total time length saved to {output_file}")
+        print(f"Total time: {self.total_timelength_min:.2f} minutes ({self.total_timelength_min/60.0:.2f} hours)")
+        print(f"Total time: {self.total_timelength_min/(60.0*24.0):.2f} days")
 
     def _generate_master_plots(self):
         """Uses the populated master containers to generate all plots."""
@@ -840,10 +891,49 @@ class MasterAggregator:
         print(f"BRN Area histograms saved to {area_img_path}")
         plt.close(fig_area)
 
+    def _save_run_info(self):
+        """Save configuration and run information to a text file."""
+        info_file = self.master_output_dir / "run_info.txt"
+        
+        with open(info_file, "w") as f:
+            f.write(f"Analysis Run Information\n")
+            f.write(f"========================\n\n")
+            f.write(f"Run Range: {self.run_range_str}\n")
+            f.write(f"M1/M2: {self.m1_or_m2}\n")
+            f.write(f"Number of Sub-jobs: {len(self.subjob_dirs)}\n")
+            f.write(f"Top Directory: {self.top_dir}\n\n")
+            
+            f.write(f"Configuration Parameters\n")
+            f.write(f"------------------------\n")
+            f.write(f"DATA_DIR_M1: {config.DATA_DIR_M1}\n")
+            f.write(f"DATA_DIR_M2: {config.DATA_DIR_M2}\n")
+            f.write(f"DELTA_T_CUT: {config.DELTA_T_CUT}\n")
+            f.write(f"PE_CUT: {config.PE_CUT}\n")
+            f.write(f"TIME_STD_CUT: {config.TIME_STD_CUT}\n")
+            f.write(f"MULTIPLICITY_SPE: {config.MULTIPLICITY_SPE}\n")
+            f.write(f"MULTIPLICITY_CUT: {config.MULTIPLICITY_CUT}\n")
+            f.write(f"DELTA_T_BIN_WIDTH_NS: {config.DELTA_T_BIN_WIDTH_NS}\n")
+            f.write(f"BINS: {config.BINS}\n")
+            f.write(f"VETO_BINS: {config.VETO_BINS}\n")
+            f.write(f"VETO_RANGE: {config.VETO_RANGE}\n")
+            f.write(f"TAU_FIT_WINDOW: {config.TAU_FIT_WINDOW}\n")
+            f.write(f"LOW_LIGHT_FIT_RANGE: {config.LOW_LIGHT_FIT_RANGE}\n")
+            f.write(f"SIPM_HIST_CONFIG: {config.SIPM_HIST_CONFIG}\n")
+            f.write(f"PERFORM_THIN_VETO_ANALYSIS: {config.PERFORM_THIN_VETO_ANALYSIS}\n")
+            f.write(f"PERFORM_BRN_ANALYSIS: {config.PERFORM_BRN_ANALYSIS}\n")
+            
+            f.write(f"\nSub-job Directories Processed:\n")
+            for d in self.subjob_dirs:
+                f.write(f"  {d.name}\n")
+            
+        print(f"Run info saved to {info_file}")
+
     def run(self):
         """Run the full aggregation process."""
         self._load_all_subjob_data()
         self._generate_master_plots()
+        self._save_total_time_length()
+        self._save_run_info()
         print("\n--- Master Aggregation Complete ---")
 
 def main():
