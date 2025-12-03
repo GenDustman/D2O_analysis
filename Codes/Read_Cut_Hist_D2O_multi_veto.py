@@ -913,7 +913,7 @@ class RunProcessor:
         
         # Apply cuts
         passing_cuts_mask = (
-            (df_all['multiplicity'] > multiplicity_cut) &
+            (df_all['multiplicity'] >= multiplicity_cut) &
             (df_all['total_pe'] >= pe_min) & (df_all['total_pe'] <= pe_max) &
             (df_all['time_std'] < time_std_cut)
         )

@@ -1,0 +1,84 @@
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/home/genli/.local/lib/python3.9/site-packages/numpy/lib/nanfunctions.py:1878: RuntimeWarning: Degrees of freedom <= 0 for slice.
+  var = nanvar(a, axis=axis, dtype=dtype, out=out, ddof=ddof,
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+/usr/local/lib64/python3.9/site-packages/scipy/stats/_stats_py.py:4424: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  warnings.warn(stats.ConstantInputWarning(msg))
+=== Configuration ===
+Analysis type: M1
+Runs: 15055 to 15057
+Output Directory for this job: /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057
+Δt cut: (17576, 219700) ns
+Photoelectron cut: (0, 1000) P.E.
+Time-std cut: < 40.0 ns
+======================
+--- Processing run 15055 ---
+Length of time: 3597975402592.0 ns
+Length of time: 59.96625670986667 minutes
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15055_20240604-05/lowlight/Run15055_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15055_20240604-05/lowlight/Run15055_M1_low_light_fits.pkl
+Applying 2000 ns time interval cut...
+Time interval cut: Kept 2395396 / 2416882 events
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15055_20240604-05/histograms/15055_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15055_20240604-05/histograms/15055_M1_veto_efficiency.pkl
+Run 15055: after NaN drop: 7473 events
+Run 15055: after Δt cut: 334 events
+Run 15055: after total_pe cut: 324 events
+Run 15055: after time-std < 40.0 ns cut: 324 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15055_20240604-05/cuthist/Run_15055_M1_correlation_map.png
+--- Processing run 15056 ---
+Length of time: 3597976467888.0 ns
+Length of time: 59.9662744648 minutes
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15056_20240604-06/lowlight/Run15056_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15056_20240604-06/lowlight/Run15056_M1_low_light_fits.pkl
+Applying 2000 ns time interval cut...
+Time interval cut: Kept 2391513 / 2413304 events
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15056_20240604-06/histograms/15056_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15056_20240604-06/histograms/15056_M1_veto_efficiency.pkl
+Run 15056: after NaN drop: 7491 events
+Run 15056: after Δt cut: 299 events
+Run 15056: after total_pe cut: 295 events
+Run 15056: after time-std < 40.0 ns cut: 295 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15056_20240604-06/cuthist/Run_15056_M1_correlation_map.png
+--- Processing run 15057 ---
+Length of time: 3597975395664.0 ns
+Length of time: 59.9662565944 minutes
+Low-light fits saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15057_20240604-07/lowlight/Run15057_M1_low_light_fits.png
+Low-light fit data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15057_20240604-07/lowlight/Run15057_M1_low_light_fits.pkl
+Applying 2000 ns time interval cut...
+Time interval cut: Kept 2371910 / 2393534 events
+Veto efficiency plot saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15057_20240604-07/histograms/15057_M1_veto_efficiency.png
+Veto efficiency data saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15057_20240604-07/histograms/15057_M1_veto_efficiency.pkl
+Run 15057: after NaN drop: 7450 events
+Run 15057: after Δt cut: 337 events
+Run 15057: after total_pe cut: 333 events
+Run 15057: after time-std < 40.0 ns cut: 333 events
+Correlation map saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/run15057_20240604-07/cuthist/Run_15057_M1_correlation_map.png
+Saving aggregated data for sub-job 15055-15057...
+Sub-job time length saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-210845/subjob_15055-15057/subjob_time_length.json
+Successfully saved data for master aggregation.
+--- Sub-job Analysis Complete ---

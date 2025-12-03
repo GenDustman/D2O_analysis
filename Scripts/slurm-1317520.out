@@ -1,0 +1,18 @@
+=== Configuration ===
+Analysis type: M1
+Runs: 15073 to 15075
+Output Directory for this job: /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-181304/subjob_15073-15075
+Δt cut: (2197, 10985) ns
+Photoelectron cut: (0, 1000) P.E.
+Time-std cut: < 40.0 ns
+======================
+--- Processing run 15073 ---
+Missing file: /raid1/genli/Data_D2O/M1_data/run15073_processed_v5.root
+--- Processing run 15074 ---
+Missing file: /raid1/genli/Data_D2O/M1_data/run15074_processed_v5.root
+--- Processing run 15075 ---
+Missing file: /raid1/genli/Data_D2O/M1_data/run15075_processed_v5.root
+Saving aggregated data for sub-job 15073-15075...
+Sub-job time length saved to /raid1/genli/Data_D2O/M1_data/analysis_14977-15096_M1_20251202-181304/subjob_15073-15075/subjob_time_length.json
+Successfully saved data for master aggregation.
+--- Sub-job Analysis Complete ---

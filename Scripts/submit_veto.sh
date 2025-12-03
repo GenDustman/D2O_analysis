@@ -11,9 +11,9 @@ SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 
 # Hardcoded Run Parameters
 start_run=14977
-end_run=14986
+end_run=15096
 M1_or_M2="M1"
-njobs=10
+njobs=50
 
 # Data Directories
 DATA_BASE_DIR="/raid1/genli/Data_D2O/M1_data"
@@ -25,6 +25,15 @@ fi
 TOP_OUTPUT_DIR="${DATA_BASE_DIR}/analysis_${start_run}-${end_run}_${M1_or_M2}_$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$TOP_OUTPUT_DIR"
 echo "Analysis batch output will be in: ${TOP_OUTPUT_DIR}"
+
+# --- Code Snapshot ---
+# Copy code to the output directory to isolate this run from future code changes
+SNAPSHOT_DIR="${TOP_OUTPUT_DIR}/code"
+mkdir -p "${SNAPSHOT_DIR}"
+cp "${SCRIPT_DIR}/"*.py "${SNAPSHOT_DIR}/"
+echo "Code snapshot created in: ${SNAPSHOT_DIR}"
+# Update SCRIPT_DIR to use the snapshot
+SCRIPT_DIR="${SNAPSHOT_DIR}"
 
 # Calculate runs per job
 total_runs=$(( end_run - start_run + 1 ))
@@ -47,7 +56,7 @@ while [ $current_run -le $end_run ]; do
     echo "Submitting processing job ${job}: Runs ${job_start} to ${job_end}"
     
     # MODIFIED: Use the SCRIPT_DIR variable
-    JOB_ID=$(sbatch --parsable -J "job_${job}_${M1_or_M2}" --wrap="python ${SCRIPT_DIR}/Read_Cut_Hist_D2O_multi_veto.py ${job_start} ${job_end} ${M1_or_M2} ${TOP_OUTPUT_DIR}")
+    JOB_ID=$(sbatch -p red --parsable -J "job_${job}_${M1_or_M2}" --wrap="python ${SCRIPT_DIR}/Read_Cut_Hist_D2O_multi_veto.py ${job_start} ${job_end} ${M1_or_M2} ${TOP_OUTPUT_DIR}")
     
     JOB_IDS+=($JOB_ID)
     current_run=$(( job_end + 1 ))
@@ -63,7 +72,7 @@ dependency_list=$(IFS=:; echo "${JOB_IDS[*]}")
 echo "Submitting final aggregation job with dependency list: ${dependency_list}"
 
 # MODIFIED: Use the SCRIPT_DIR variable
-sbatch --dependency=afterok:${dependency_list} \
+sbatch -p red --dependency=afterok:${dependency_list} \
        -J "aggregate_${M1_or_M2}" \
        --wrap="python ${SCRIPT_DIR}/aggregate_master_veto.py ${TOP_OUTPUT_DIR}"
 

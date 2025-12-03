@@ -23,11 +23,12 @@ suffix_M2 = "_processed_H2O_v5.root"
 TIME_INTERVAL_CUT_NS = 2000  # Pile-up cut in ns
 muon_life = 2197  # Muon lifetime in ns
 DELTA_T_CUT = (muon_life, 5*muon_life)      # (min_ns, max_ns)
+# DELTA_T_CUT = (8*muon_life, 100*muon_life)      # (min_ns, max_ns)
 # DELTA_T_CUT = (960, 10560)      # (min_ns, max_ns)
 PE_CUT = (0, 1000)             # (min_pe, max_pe)
 TIME_STD_CUT = 2.5 * 16        # Max standard deviation of PMT hit times in an event (ns)
-MULTIPLICITY_SPE = 1.0         # P.E. threshold to count a PMT as "hit"
-MULTIPLICITY_CUT = 10          # Minimum number of hit PMTs for an event
+MULTIPLICITY_SPE = 1.5         # P.E. threshold to count a PMT as "hit"
+MULTIPLICITY_CUT = 11          # Minimum number of hit PMTs for an event
 
 # --- Time quantization & dedicated Δt binning ---
 TIME_TICK_NS = 16                 # DAQ time granularity
