@@ -43,6 +43,8 @@ except ImportError:
         DATA_DIR_M1 = "/path/to/M1/data"
         DATA_DIR_M2 = "/path/to/M2/data"
         TIME_TICK_NS = 16
+        PMT_CHANNELS  = list(range(0, 12))
+        SIPM_CHANNELS = list(range(12, 22))
         DELTA_T_BIN_WIDTH_NS = 16
         DELTA_T_LEFT_EDGE_NS = 0
         DELTA_T_CUT = (0, 10000)
@@ -169,7 +171,7 @@ class DataProcessor:
             nan_ch = np.where(np.isnan(mu1_values) | (mu1_values <= 0))[0]
             print(f"Warning: mu1 fit failed/invalid for channels {nan_ch}. These channels will be excluded from the P.E. sum.")
         
-        area_data_np = np.array(df['area_array'].to_list())[:, :12]
+        area_data_np = np.array(df['area_array'].to_list())[:, config.PMT_CHANNELS]
         pe_per_channel = area_data_np / mu1_safe
         total_pe = np.sum(pe_per_channel, axis=1)
         
@@ -517,8 +519,9 @@ class Plotter:
             print(f"No events for veto efficiency calculation for {title}. Skipping.")
             return
 
-        pe_min, pe_max = pe_range
-        bin_edges = np.linspace(pe_min, pe_max, bins + 1)
+        # Use vetorange for binning to ensure bins align with display range
+        veto_min, veto_max = vetorange
+        bin_edges = np.linspace(veto_min, veto_max, bins + 1)
         
         counts_2, _ = np.histogram(trig2_pe, bins=bin_edges)
         counts_2_or_34, _ = np.histogram(trig2_or_34_pe, bins=bin_edges)
@@ -549,7 +552,7 @@ class Plotter:
         plt.ylabel('Veto Efficiency')
         plt.title(f"{title} ({M1_or_M2})")
         plt.xlim(vetorange)
-        plt.ylim(0, 1.1)
+        plt.ylim(0.99, 1.005)
         plt.grid(which='major', linestyle='-', linewidth=0.7)
         plt.grid(which='minor', linestyle=':', linewidth=0.5)
         plt.minorticks_on()
@@ -860,7 +863,7 @@ class RunProcessor:
 
     def _process_low_light_events(self, ll_events, ll_dir, run, M1_or_M2, low_light_fit_range):
         """Process low-light events and perform fitting."""
-        low_light_area_data = np.array(ll_events['area_array'].to_list())[:, :12] if not ll_events.empty else np.array([])
+        low_light_area_data = np.array(ll_events['area_array'].to_list())[:, config.PMT_CHANNELS] if not ll_events.empty else np.array([])
         
         if low_light_area_data.size > 0:
             mu1_values, fit_results_data = self._fit_and_plot_low_light(
@@ -891,8 +894,8 @@ class RunProcessor:
 
     def _calculate_derived_quantities(self, df_all, mu1_values_run, multiplicity_spe):
         """Calculate derived quantities like multiplicity, time_std, and total_pe."""
-        area_data_np = np.array(df_all['area_array'].to_list())[:, :12]
-        times_data_np = np.array(df_all['peakPosition'].to_list())[:, :12]
+        area_data_np = np.array(df_all['area_array'].to_list())[:, config.PMT_CHANNELS]
+        times_data_np = np.array(df_all['peakPosition'].to_list())[:, config.PMT_CHANNELS]
         
         mu1_safe = np.where(np.isnan(mu1_values_run) | (mu1_values_run <= 0), np.inf, mu1_values_run)
         pe_per_channel = area_data_np / mu1_safe
@@ -1062,7 +1065,8 @@ class RunProcessor:
         
         plt.errorbar(dt_centers, dt_counts, yerr=dt_err, fmt='o', label=run_label)
         plt.xlabel('Δt (ns)')
-        plt.ylabel('Counts')
+        dt_bin_width = float(np.median(np.diff(dt_edges))) if dt_edges.size > 1 else 0.0
+        plt.ylabel(f'Counts per bin ({dt_bin_width:.1f} ns per bin)')
         plt.title(f'Δt Histogram ({M1_or_M2})')
         if logscale: 
             plt.yscale('log')
@@ -1092,7 +1096,8 @@ class RunProcessor:
         plt.errorbar(pe_centers, pe_counts, yerr=pe_err, fmt='o', label=plot_label)
         
         plt.xlabel('Total Photoelectrons')
-        plt.ylabel('Counts')
+        pe_bin_width = float(np.median(np.diff(pe_edges))) if pe_edges.size > 1 else 0.0
+        plt.ylabel(f'Counts per bin ({pe_bin_width:.1f} P.E. per bin)')
         plt.title(f'Total Photoelectron Histogram ({M1_or_M2})')
         plt.axvline(peak, color='red', linestyle='--', label=f'Peak = {peak} p.e.')
         if logscale: 
@@ -1107,15 +1112,15 @@ class RunProcessor:
 
 def main():
     """Entry point for a single sub-job."""
-    if len(sys.argv) != 5:
-        print("Usage: python Read_Cut_Hist_D2O_multi_veto.py <start_run> <end_run> <M1_or_M2> <top_output_dir>")
+    if len(sys.argv) < 4:
+        print("Usage: python script.py <start_run> <end_run> <M1_or_M2> [output_dir] [step]")
         sys.exit(1)
         
     start_run = int(sys.argv[1])
     end_run = int(sys.argv[2])
     M1_or_M2 = sys.argv[3]
     top_output_dir = Path(sys.argv[4])
-    
+    step = int(sys.argv[5]) if len(sys.argv) > 5 else 1
     if M1_or_M2 == 'M1':
         data_dir = Path(config.DATA_DIR_M1)
     elif M1_or_M2 == 'M2':
@@ -1150,7 +1155,7 @@ def main():
     total_subjob_timelength_ns = 0.0
 
     # Process runs
-    for run in range(start_run, end_run + 1):
+    for run in range(start_run, end_run + 1, step):
         try:
             result_tuple = processor.process_run(
                 run, data_dir, output_dir, config.DELTA_T_CUT, config.PE_CUT, 

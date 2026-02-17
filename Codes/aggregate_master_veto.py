@@ -115,7 +115,8 @@ class BinnedDataPlotter:
                 outputs[label] = np.zeros(len(bin_centers))
 
         plt.xlabel(xlabel)
-        plt.ylabel('Events')
+        bin_width = float(np.median(np.diff(bin_edges))) if bin_edges.size > 1 else 0.0
+        plt.ylabel('Events per Bin Width ({:.2f})'.format(bin_width))
         plt.title(f"{title} ({M1_or_M2})")
         if logscale:
             plt.yscale('log')
@@ -147,7 +148,7 @@ class BinnedDataPlotter:
         error = np.zeros_like(counts_2, dtype=float)
         valid_mask = counts_2_or_34 > 0
         
-        ratio = np.divide(counts_2[valid_mask], counts_2_or_34[valid_mask], where=valid_mask)
+        ratio = np.divide(counts_2[valid_mask], counts_2_or_34[valid_mask])
         efficiency[valid_mask] = 1 - ratio
         
         veto_range_mask = valid_mask & (bin_centers >= vetorange[0]) & (bin_centers <= vetorange[1])
@@ -156,21 +157,99 @@ class BinnedDataPlotter:
         n = counts_2_or_34[valid_mask]
         p = ratio[valid_mask] 
         error[valid_mask] = np.sqrt(p * (1 - p) / n)
+        err_average_efficiency = np.sqrt(np.mean(error[veto_range_mask]**2)) if np.any(veto_range_mask) else np.nan
+
+        # --- Michel tail subtraction (fit exponential in specified range) ---
+        def exp_model(x, a, b):
+            return a * np.exp(b * x)
+
+        michel_tail_counts = np.zeros_like(counts_2, dtype=float)
+        michel_tail_variance = np.zeros_like(counts_2, dtype=float)
+        michel_fit_params = None
+        michel_fit_cov = None
+        michel_fit_range = (vetorange[0] * 0.5, vetorange[1] * 0.5)
+
+        fit_mask = (bin_centers >= michel_fit_range[0]) & (bin_centers <= michel_fit_range[1]) & (counts_2 > 0)
+        if np.count_nonzero(fit_mask) >= 2:
+            x_fit = bin_centers[fit_mask]
+            y_fit = counts_2[fit_mask]
+            try:
+                a0 = max(y_fit.max(), 1.0)
+                b0 = -1.0 / max((michel_fit_range[1] - michel_fit_range[0]), 1.0)
+                popt, pcov = curve_fit(exp_model, x_fit, y_fit, p0=(a0, b0), bounds=([0.0, -np.inf], [np.inf, 0.0]))
+                michel_fit_params = {'a': float(popt[0]), 'b': float(popt[1])}
+                michel_fit_cov = pcov.tolist()
+                michel_tail_counts = exp_model(bin_centers, *popt)
+                michel_tail_counts = np.clip(michel_tail_counts, 0.0, None)
+
+                # Propagate fit covariance to per-bin tail variance
+                if pcov is not None and np.all(np.isfinite(pcov)):
+                    exp_term = np.exp(popt[1] * bin_centers)
+                    jac_a = exp_term
+                    jac_b = popt[0] * bin_centers * exp_term
+                    michel_tail_variance = (
+                        jac_a * jac_a * pcov[0, 0]
+                        + jac_b * jac_b * pcov[1, 1]
+                        + 2.0 * jac_a * jac_b * pcov[0, 1]
+                    )
+                    michel_tail_variance = np.clip(michel_tail_variance, 0.0, None)
+            except Exception as e:
+                print(f"Warning: Michel tail fit failed for {title}. Error: {e}")
+
+        # Subtracted efficiency
+        counts_2_sub = counts_2 - michel_tail_counts
+        counts_2_sub = np.clip(counts_2_sub, 0.0, None)
+        counts_2_or_34_sub = counts_2_or_34 - michel_tail_counts
+        counts_2_or_34_sub = np.clip(counts_2_or_34_sub, 0.0, None)
+
+        label_raw = r'Raw: $\varepsilon_{\mathrm{veto}}$'
+        label_sub = r'Michel-sub: $\varepsilon_{\mathrm{veto}}$'
+
+        efficiency_sub = np.zeros_like(counts_2, dtype=float)
+        error_sub = np.zeros_like(counts_2, dtype=float)
+        valid_mask_sub = counts_2_or_34_sub > 0
+        veto_range_mask_sub = valid_mask_sub & (bin_centers >= vetorange[0]) & (bin_centers <= vetorange[1])
+        ratio_sub = np.divide(counts_2_sub[valid_mask_sub], counts_2_or_34_sub[valid_mask_sub])
+        efficiency_sub[valid_mask_sub] = 1 - ratio_sub
+
+        # Error propagation for r=(N-S)/(D-S): include Poisson N,D and shared Michel-tail S uncertainty
+        denom_sub = counts_2_or_34_sub[valid_mask_sub]
+        var_num = counts_2[valid_mask_sub]
+        var_den = counts_2_or_34[valid_mask_sub]
+        var_tail = michel_tail_variance[valid_mask_sub]
+        d_ratio_d_num = 1.0 / np.maximum(denom_sub, 1e-12)
+        d_ratio_d_den = -ratio_sub / np.maximum(denom_sub, 1e-12)
+        d_ratio_d_tail = (counts_2[valid_mask_sub] - counts_2_or_34[valid_mask_sub]) / np.maximum(denom_sub, 1e-12) ** 2
+        with np.errstate(divide='ignore', invalid='ignore'):
+            var_ratio = (
+                (d_ratio_d_num ** 2) * var_num
+                + (d_ratio_d_den ** 2) * var_den
+                + (d_ratio_d_tail ** 2) * var_tail
+            )
+        var_ratio = np.clip(var_ratio, 0.0, None)
+        error_sub[valid_mask_sub] = np.sqrt(var_ratio)
 
         plt.figure(figsize=(10, 6))
         plt.errorbar(bin_centers[valid_mask], efficiency[valid_mask], yerr=error[valid_mask],
-                     fmt='o', capsize=3, label='efficiency = 1 - N(trig=2) / N(trig=2 or 34)', 
-                     color='navy', markersize=5)
+                     fmt='o', capsize=3, label=label_raw, color='navy', markersize=5)
+        plt.errorbar(bin_centers[valid_mask_sub], efficiency_sub[valid_mask_sub], yerr=error_sub[valid_mask_sub],
+                 fmt='s', capsize=3, label=label_sub, color='darkorange', markersize=4)
         
         if not np.isnan(average_efficiency):
             plt.axhline(average_efficiency, color='red', linestyle='--',
-                        label=f'Average Efficiency = {average_efficiency:.4f}')
+                        label=f'Average Efficiency = {100*average_efficiency:.4f}% ± {100*err_average_efficiency:.4f}%')
+
+        average_efficiency_sub = np.mean(efficiency_sub[veto_range_mask_sub]) if np.any(veto_range_mask_sub) else np.nan
+        err_average_efficiency_sub = np.sqrt(np.mean(error_sub[veto_range_mask_sub]**2)) if np.any(veto_range_mask_sub) else np.nan
+        if not np.isnan(average_efficiency_sub):
+            plt.axhline(average_efficiency_sub, color='orange', linestyle=':',
+                        label=f'Average Efficiency (Michel-sub) = {100*average_efficiency_sub:.4f}% ± {100*err_average_efficiency_sub:.4f}%')
         
         plt.xlabel('Total Photoelectrons (P.E.)')
         plt.ylabel('Veto Efficiency')
         plt.title(f"{title} ({M1_or_M2})")
         plt.xlim(vetorange)
-        plt.ylim(0, 1.1)
+        plt.ylim(0.995, 1.002)
         plt.grid(which='major', linestyle='-', linewidth=0.7)
         plt.grid(which='minor', linestyle=':', linewidth=0.5)
         plt.minorticks_on()
@@ -182,7 +261,13 @@ class BinnedDataPlotter:
 
         pickle_data = {
             'centers': bin_centers, 'efficiency': efficiency, 'error': error,
-            'counts_2': counts_2, 'counts_2_or_34': counts_2_or_34
+            'efficiency_subtracted': efficiency_sub, 'error_subtracted': error_sub,
+            'counts_2': counts_2, 'counts_2_or_34': counts_2_or_34,
+            'michel_tail_counts': michel_tail_counts,
+            'michel_fit_params': michel_fit_params,
+            'michel_fit_cov': michel_fit_cov,
+            'michel_fit_range': michel_fit_range,
+            'michel_tail_variance': michel_tail_variance
         }
         self.file_handler.save_pickle(pickle_data, pkl_path)
         print(f"Veto efficiency plot saved to {img_path}")
@@ -200,7 +285,7 @@ class BinnedDataPlotter:
         axes = axes.flatten()
         
         sipm_hist_data = {}
-        sipm_channels = range(12, 22)
+        sipm_channels = config.SIPM_CHANNELS
         
         for i, ch in enumerate(sipm_channels):
             ax = axes[i]
@@ -265,7 +350,8 @@ class BinnedDataPlotter:
             outputs[label2] = counts2
 
         plt.xlabel(xlabel)
-        plt.ylabel('Normalized Events / Bin Width')
+        bin_width = float(np.median(np.diff(bin_edges))) if bin_edges.size > 1 else 0.0
+        plt.ylabel(f'Normalized Events / Bin Width ({bin_width:.2f})')
         plt.title(f"{title} ({M1_or_M2})")
         plt.yscale('log')
         plt.legend()
@@ -383,11 +469,69 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
     
     # PE histogram
     pe_edges = hist_calc.bin_edges_from_spec(bins, pe_data, pe_cut)
-    plotter.plot_histogram(
-        [pe_data], [agg_label], pe_edges,
-        output_dir / f"aggregated_total_pe_{m1_or_m2}.png",
-        f"Aggregated Total PE {agg_label}", "Total P.E.", m1_or_m2, logscale_pe
-    )
+    pe_counts, _ = np.histogram(pe_data, bins=pe_edges)
+    pe_centers = 0.5 * (pe_edges[:-1] + pe_edges[1:])
+    pe_err = np.sqrt(pe_counts)
+
+    # Exponential fit for aggregated total PE
+    def exp_model(x, a, b):
+        return a * np.exp(b * x)
+
+    fit_range = (config.VETO_RANGE[0] * 0.5, config.VETO_RANGE[1] * 0.5)
+    fit_mask = (pe_counts > 0) & (pe_centers >= fit_range[0]) & (pe_centers <= fit_range[1])
+    fit_params = None
+    fit_curve = None
+    if np.count_nonzero(fit_mask) >= 2:
+        x_fit = pe_centers[fit_mask]
+        y_fit = pe_counts[fit_mask]
+        try:
+            a0 = max(y_fit.max(), 1.0)
+            b0 = -1.0 / max((pe_centers.max() - pe_centers.min()), 1.0)
+            popt, _ = curve_fit(
+                exp_model,
+                x_fit,
+                y_fit,
+                p0=(a0, b0),
+                bounds=([0.0, -np.inf], [np.inf, 0.0])
+            )
+            fit_params = {'a': float(popt[0]), 'b': float(popt[1])}
+            pe_centers_fit = pe_centers[fit_mask]
+            fit_curve = exp_model(pe_centers_fit, *popt)
+            fit_curve = np.clip(fit_curve, 0.0, None)
+        except Exception as e:
+            print(f"Warning: Exponential fit failed for aggregated total PE. Error: {e}")
+
+    plt.figure(figsize=(10, 6))
+    plt.errorbar(pe_centers, pe_counts, yerr=pe_err, fmt='o', label=agg_label, markersize=5, zorder=2)
+    if fit_curve is not None:
+        plt.plot(pe_centers_fit, fit_curve, 'r-', label='Exp fit, a={:.2f}, b={:.2f}'.format(fit_params['a'], fit_params['b']), zorder=3)
+    # Shade veto-efficiency fit window
+    plt.axvspan(fit_range[0], fit_range[1], color='gray', alpha=0.3, label='Fit Window')
+    plt.xlabel('Total P.E.')
+    bin_width_pe = float(np.median(np.diff(pe_edges))) if pe_edges.size > 1 else 0.0
+    plt.ylabel(f'Counts per bin ({bin_width_pe:.1f} P.E. per bin)')
+    plt.title(f"Aggregated Total PE {agg_label} ({m1_or_m2})")
+    if logscale_pe:
+        plt.yscale('log')
+        plt.ylim(bottom=0.8)
+    plt.legend()
+    plt.minorticks_on()
+    plt.grid(which='major', axis='y', linestyle='-', linewidth=0.75, color='gray')
+    plt.grid(which='minor', axis='y', linestyle=':', linewidth=0.5, color='gray')
+    plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
+    plt.tight_layout()
+    pe_img_path = output_dir / f"aggregated_total_pe_{m1_or_m2}.png"
+    plt.savefig(pe_img_path)
+    plt.close()
+
+    pe_pkl_path = pe_img_path.with_suffix('.pkl')
+    pickle_data = {
+        'centers': pe_centers,
+        'histograms': {agg_label: pe_counts},
+        'errors': {agg_label: pe_err},
+        'fit_params': fit_params
+    }
+    plotter.file_handler.save_pickle(pickle_data, pe_pkl_path)
 
 class MasterAggregator:
     """Main aggregator class for combining all sub-job results."""
@@ -438,7 +582,7 @@ class MasterAggregator:
         self.all_brn_data = []
 
         # SiPM data
-        self.sipm_channels = list(range(12, 22))
+        self.sipm_channels = config.SIPM_CHANNELS
         self.sipm_bin_edges = np.linspace(*config.SIPM_HIST_CONFIG['hist_range'], 
                                          config.SIPM_HIST_CONFIG['hist_bins'] + 1)
         self.master_sipm_hist_counts = {ch: np.zeros(config.SIPM_HIST_CONFIG['hist_bins']) 
@@ -451,7 +595,7 @@ class MasterAggregator:
         self.master_pe_comp_counts_2 = np.zeros(config.BINS)
         self.master_pe_comp_counts_2_or_34 = np.zeros(config.BINS)
         
-        self.veto_bin_edges = np.linspace(config.PE_CUT[0], config.PE_CUT[1], config.VETO_BINS + 1)
+        self.veto_bin_edges = np.linspace(config.VETO_RANGE[0]*0.5, config.VETO_RANGE[1], config.VETO_BINS + 1)
         self.master_veto_counts_2 = np.zeros(config.VETO_BINS)
         self.master_veto_counts_2_or_34 = np.zeros(config.VETO_BINS)
         self.veto_data_found = False
@@ -689,7 +833,7 @@ class MasterAggregator:
                     {'Trig=2 or 34': self.master_pe_comp_counts_2_or_34, 'Trig=2': self.master_pe_comp_counts_2},
                     self.pe_comp_bin_edges,
                     self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_total_pe_comparison_master.png",
-                    f'Master Total PE Comparison {self.agg_label}', 'Total P.E.', self.m1_or_m2, logscale=True
+                    f'Total PE Comparison {self.agg_label}', 'Total P.E.', self.m1_or_m2, logscale=True
                 )
             else:
                 print("No events for Master Total PE comparison; skipping plot.")
@@ -699,7 +843,7 @@ class MasterAggregator:
             self.binned_plotter.plot_veto_efficiency_from_binned_data(
                 self.master_veto_counts_2, self.master_veto_counts_2_or_34,
                 self.veto_bin_edges, config.VETO_RANGE,
-                veto_img_path, veto_pkl_path, f"Master Veto Efficiency {self.agg_label}", self.m1_or_m2
+                veto_img_path, veto_pkl_path, f"Veto Efficiency {self.agg_label}", self.m1_or_m2
             )
         else:
             print("No Veto Efficiency data found.")

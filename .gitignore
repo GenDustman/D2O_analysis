@@ -1,0 +1,5 @@
+# ignore all CSVs
+*.csv
+
+# ignore SLURM stdout files like slurm-12345.out
+slurm-*.out

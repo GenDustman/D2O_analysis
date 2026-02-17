@@ -14,10 +14,16 @@ aggregator (aggregate_master.py) will import their settings from here.
 # M1_or_M2 = "M1"
 # N_JOBS = 30
 
+# --- Channel Definitions ---
+# These are the indices inside ROOT branches: area[i], pulseH[i], peakPosition[i]
+
+PMT_CHANNELS  = list(range(0, 12))     # PMT channels: 0-11
+SIPM_CHANNELS = list(range(12, 22))    # SiPM channels: 12-21
+
 # --- Run & Directory Configuration ---
 DATA_DIR_M1 = "/raid1/genli/Data_D2O/M1_data"
 DATA_DIR_M2 = "/raid1/genli/Data_D2O/M2_data"
-suffix_M1 = "_processed_v4.root"
+suffix_M1 = "_processed_v5.root"
 suffix_M2 = "_processed_H2O_v5.root"
 # --- Cut & Binning Configuration ---
 TIME_INTERVAL_CUT_NS = 2000  # Pile-up cut in ns
@@ -25,7 +31,7 @@ muon_life = 2197  # Muon lifetime in ns
 DELTA_T_CUT = (muon_life, 5*muon_life)      # (min_ns, max_ns)
 # DELTA_T_CUT = (8*muon_life, 100*muon_life)      # (min_ns, max_ns)
 # DELTA_T_CUT = (960, 10560)      # (min_ns, max_ns)
-PE_CUT = (0, 1000)             # (min_pe, max_pe)
+PE_CUT = (0, 2000)             # (min_pe, max_pe)
 TIME_STD_CUT = 2.5 * 16        # Max standard deviation of PMT hit times in an event (ns)
 MULTIPLICITY_SPE = 1.5         # P.E. threshold to count a PMT as "hit"
 MULTIPLICITY_CUT = 11          # Minimum number of hit PMTs for an event
@@ -37,10 +43,10 @@ DELTA_T_BIN_WIDTH_NS = 160         # Δt bin width; choose k*TIME_TICK_NS (e.g.,
 DELTA_T_LEFT_EDGE_NS = 0
 
 # --- Histogram & Plotting Configuration ---
-BINS = 1000                     # or 'auto' or keep an int like 100
+BINS = 100                     # or 'auto' or keep an int like 100
 VETO_BINS = 20                 # Bin count for veto efficiency plots
-VETO_RANGE = (900, 2000)       # P.E. range for plotting veto efficiency
-LOGSCALE_PE_AGG = False        # Use log scale for the aggregated P.E. y-axis
+VETO_RANGE = (1000, 2000)       # P.E. range for plotting veto efficiency
+LOGSCALE_PE_AGG = True        # Use log scale for the aggregated P.E. y-axis
 LOGSCALE_DT_AGG = True         # Use log scale for the aggregated delta_t y-axis
 LOGSCALE_GENERAL = True        # Default log scale for per-run histograms
 
@@ -71,7 +77,7 @@ PERFORM_BRN_ANALYSIS = False
 BRN_DELTA_T_RANGE = (0, 4000)   # (ns) Time window to plot BRN delta_t
 BRN_DELTA_T_BIN_WIDTH_NS = 64    # Δt bin width for BRN analysis, must be multiple of TIME_TICK_NS
 BRN_SIPM_THRESHOLD_ADC = 30.0     # PulseH threshold for a SiPM channel to be "triggered"
-BRN_SIPM_CHANNELS = list(range(12, 22)) # Channels 12-21
+BRN_SIPM_CHANNELS = SIPM_CHANNELS
 BRN_HIST_CONFIG = {
     'area_bins': 100,
     'area_range': (-50, 4000) # (min_adc, max_adc)

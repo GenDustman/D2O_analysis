@@ -191,7 +191,8 @@ def save_cut_histograms(events, delta_t_range, pe_range, bins,
     save_pickle({'hist': dt_counts, 'centers': dt_centers, 'errors': dt_err},
                 save_dir / 'delta_t_hist.pkl')
     plt.errorbar(dt_centers, dt_counts, yerr=dt_err, fmt='o', label=run_label)
-    plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title('Δt Histogram')
+    dt_bin_width = float(np.median(np.diff(dt_edges))) if dt_edges.size > 1 else 0.0
+    plt.xlabel('Δt (ns)'); plt.ylabel(f'Counts per bin ({dt_bin_width:.1f} ns per bin)'); plt.title('Δt Histogram')
     if logscale: plt.yscale('log')
     plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'delta_t_hist.png'); plt.close()
 
@@ -213,7 +214,8 @@ def save_cut_histograms(events, delta_t_range, pe_range, bins,
     plot_label = f'{run_label}\nMean = {mean_pe_val} p.e.'
     plt.errorbar(pe_centers, pe_counts, yerr=pe_err, fmt='o', label=plot_label)
     
-    plt.xlabel('Total Photoelectrons'); plt.ylabel('Counts'); plt.title('Total Photoelectron Histogram')
+    pe_bin_width = float(np.median(np.diff(pe_edges))) if pe_edges.size > 1 else 0.0
+    plt.xlabel('Total Photoelectrons'); plt.ylabel(f'Counts per bin ({pe_bin_width:.1f} P.E. per bin)'); plt.title('Total Photoelectron Histogram')
     plt.axvline(peak, color='red', linestyle='--', label=f'Peak = {peak} p.e.')
     if logscale: plt.yscale('log')
     plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'total_pe_hist.png'); plt.close()
@@ -440,7 +442,8 @@ def aggregate_plots(aggregated, delta_t_cut, pe_cut, bins,
             else:
                 print("Warning: No data in the specified fit window. Skipping the fit.")
 
-        plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title(f'Aggregated Δt')
+        dt_bin_width = float(np.median(np.diff(dt_edges))) if dt_edges.size > 1 else 0.0
+        plt.xlabel('Δt (ns)'); plt.ylabel(f'Counts per bin ({dt_bin_width:.1f} ns per bin)'); plt.title(f'Aggregated Δt')
         if logscale_dt: plt.yscale('log')
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_delta_t.png'); plt.close()
@@ -464,7 +467,8 @@ def aggregate_plots(aggregated, delta_t_cut, pe_cut, bins,
         plt.errorbar(pe_centers, hist_pe, yerr=pe_err, fmt='o', label=plot_label)
         
         plt.axvline(peak, color='red', linestyle='--', label=f'Peak = {peak} p.e.')
-        plt.xlabel('Total Photoelectrons'); plt.ylabel('Counts'); plt.title(f'Aggregated Total Photoelectrons')
+        pe_bin_width = float(np.median(np.diff(pe_edges))) if pe_edges.size > 1 else 0.0
+        plt.xlabel('Total Photoelectrons'); plt.ylabel(f'Counts per bin ({pe_bin_width:.1f} P.E. per bin)'); plt.title(f'Aggregated Total Photoelectrons')
         if logscale_pe: plt.yscale('log')
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_total_pe.png'); plt.close()

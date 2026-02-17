@@ -149,7 +149,8 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
     save_pickle({'hist': dt_counts, 'centers': dt_centers, 'errors': dt_err},
                 save_dir / 'delta_t_hist.pkl')
     plt.errorbar(dt_centers, dt_counts, yerr=dt_err, fmt='o', label=run_label)
-    plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title('Δt Histogram')
+    dt_bin_width = float(np.median(np.diff(dt_edges))) if dt_edges.size > 1 else 0.0
+    plt.xlabel('Δt (ns)'); plt.ylabel(f'Counts per bin ({dt_bin_width:.1f} ns per bin)'); plt.title('Δt Histogram')
     if logscale: plt.yscale('log')
     plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'delta_t_hist.png'); plt.close()
     s_bins = np.linspace(s_min, s_max, bins+1)
@@ -159,7 +160,8 @@ def save_cut_histograms(events, delta_t_range, area_range, bins,
     save_pickle({'hist': s_counts, 'centers': s_centers, 'errors': s_err},
                 save_dir / 'sum_area_hist.pkl')
     plt.errorbar(s_centers, s_counts, yerr=s_err, fmt='o', label=run_label)
-    plt.xlabel('Sum Area (ADC)'); plt.ylabel('Counts'); plt.title('Total Charge Histogram')
+    s_bin_width = float(np.median(np.diff(s_edges))) if s_edges.size > 1 else 0.0
+    plt.xlabel('Sum Area (ADC)'); plt.ylabel(f'Counts per bin ({s_bin_width:.1f} ADC per bin)'); plt.title('Total Charge Histogram')
     if logscale: plt.yscale('log')
     plt.legend(); plt.grid(True); plt.tight_layout(); plt.savefig(save_dir / 'sum_area_hist.png'); plt.close()
     return sel['delta_t'].values, sel['sum_area'].values
@@ -255,7 +257,8 @@ def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
         plt.errorbar(dt_centers, hist_dt, yerr=dt_err, fmt='o', label='Data')
         plt.plot(dt_centers, fit_line, '--', label=f'Fit τ={tau:.1f}±{tau_err:.1f} ns')
         plt.axvspan(t_low, t_high, color='gray', alpha=0.2, label='Fit Range')
-        plt.xlabel('Δt (ns)'); plt.ylabel('Counts'); plt.title(f'Aggregated Δt')
+        dt_bin_width = float(np.median(np.diff(dt_edges))) if dt_edges.size > 1 else 0.0
+        plt.xlabel('Δt (ns)'); plt.ylabel(f'Counts per bin ({dt_bin_width:.1f} ns per bin)'); plt.title(f'Aggregated Δt')
         if logscale: plt.yscale('log')
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_delta_t.png'); plt.close()
@@ -269,7 +272,8 @@ def aggregate_plots(aggregated, delta_t_cut, area_cut, bins,
         sa_centers = 0.5 * (sa_edges[:-1] + sa_edges[1:])
         sa_err = np.sqrt(hist_sa)
         plt.errorbar(sa_centers, hist_sa, yerr=sa_err, fmt='o', label=f'Runs')
-        plt.xlabel('Total Charge (ADC)'); plt.ylabel('Counts'); plt.title(f'Aggregated Total Charge')
+        sa_bin_width = float(np.median(np.diff(sa_edges))) if sa_edges.size > 1 else 0.0
+        plt.xlabel('Total Charge (ADC)'); plt.ylabel(f'Counts per bin ({sa_bin_width:.1f} ADC per bin)'); plt.title(f'Aggregated Total Charge')
         if logscale: plt.yscale('log')
         plt.legend(); plt.grid(which='both'); plt.tight_layout()
         plt.savefig(output_dir / 'aggregated_sum_area.png'); plt.close()

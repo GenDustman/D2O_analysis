@@ -2,7 +2,7 @@
 ###############################################################################
 # SLURM Job Submission Script with Automated Aggregation
 #
-# This version defines key paths as variables for easier modification.
+# This version supports non-consecutive runs with a step parameter.
 ###############################################################################
 
 # --- User-Defined Path Configuration ---
@@ -10,10 +10,12 @@
 SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 
 # Hardcoded Run Parameters
-start_run=14977
-end_run=15096
-M1_or_M2="M1"
-njobs=50
+start_run=4598
+end_run=4768
+step=10  # NEW: Process every Nth run
+M1_or_M2="M2"
+njobs=30
+partition="blue"
 
 # Data Directories
 DATA_BASE_DIR="/raid1/genli/Data_D2O/M1_data"
@@ -22,7 +24,7 @@ if [ "$M1_or_M2" == "M2" ]; then
 fi
 
 # Create a Unique Top-Level Directory for this entire analysis
-TOP_OUTPUT_DIR="${DATA_BASE_DIR}/analysis_${start_run}-${end_run}_${M1_or_M2}_$(date +%Y%m%d-%H%M%S)"
+TOP_OUTPUT_DIR="${DATA_BASE_DIR}/analysis_${start_run}-${end_run}_step${step}_${M1_or_M2}_$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$TOP_OUTPUT_DIR"
 echo "Analysis batch output will be in: ${TOP_OUTPUT_DIR}"
 
@@ -35,31 +37,37 @@ echo "Code snapshot created in: ${SNAPSHOT_DIR}"
 # Update SCRIPT_DIR to use the snapshot
 SCRIPT_DIR="${SNAPSHOT_DIR}"
 
-# Calculate runs per job
-total_runs=$(( end_run - start_run + 1 ))
+# Calculate total runs with step
+run_list=()
+for ((r=start_run; r<=end_run; r+=step)); do
+    run_list+=($r)
+done
+total_runs=${#run_list[@]}
 runs_per_job=$(( (total_runs + njobs - 1) / njobs ))
-echo "Total runs: $total_runs, Runs per job: $runs_per_job"
+echo "Total runs to process: $total_runs (every ${step}th run from $start_run to $end_run)"
+echo "Runs per job: $runs_per_job"
 
 # Array to hold job IDs
 declare -a JOB_IDS=()
 
 # Main Loop: Submit Parallel Processing Jobs
 job=0
-current_run=$start_run
-while [ $current_run -le $end_run ]; do
-    job_start=$current_run
-    job_end=$(( current_run + runs_per_job - 1 ))
-    if [ $job_end -gt $end_run ]; then
-        job_end=$end_run
+idx=0
+while [ $idx -lt $total_runs ]; do
+    job_start_run=${run_list[$idx]}
+    end_idx=$(( idx + runs_per_job - 1 ))
+    if [ $end_idx -ge $total_runs ]; then
+        end_idx=$(( total_runs - 1 ))
     fi
+    job_end_run=${run_list[$end_idx]}
 
-    echo "Submitting processing job ${job}: Runs ${job_start} to ${job_end}"
+    echo "Submitting processing job ${job}: Runs ${job_start_run} to ${job_end_run} with step ${step}"
     
-    # MODIFIED: Use the SCRIPT_DIR variable
-    JOB_ID=$(sbatch -p red --parsable -J "job_${job}_${M1_or_M2}" --wrap="python ${SCRIPT_DIR}/Read_Cut_Hist_D2O_multi_veto.py ${job_start} ${job_end} ${M1_or_M2} ${TOP_OUTPUT_DIR}")
+    # Pass step parameter to Python script
+    JOB_ID=$(sbatch -p "$partition" --parsable -J "job_${job}_${M1_or_M2}" --wrap="python ${SCRIPT_DIR}/Read_Cut_Hist_D2O_multi_veto.py ${job_start_run} ${job_end_run} ${M1_or_M2} ${TOP_OUTPUT_DIR} ${step}")
     
     JOB_IDS+=($JOB_ID)
-    current_run=$(( job_end + 1 ))
+    idx=$(( end_idx + 1 ))
     job=$(( job + 1 ))
 done
 
@@ -71,8 +79,7 @@ dependency_list=$(IFS=:; echo "${JOB_IDS[*]}")
 # Submit the final aggregation job with a dependency
 echo "Submitting final aggregation job with dependency list: ${dependency_list}"
 
-# MODIFIED: Use the SCRIPT_DIR variable
-sbatch -p red --dependency=afterok:${dependency_list} \
+sbatch -p "$partition" --dependency=afterok:${dependency_list} \
        -J "aggregate_${M1_or_M2}" \
        --wrap="python ${SCRIPT_DIR}/aggregate_master_veto.py ${TOP_OUTPUT_DIR}"
 
