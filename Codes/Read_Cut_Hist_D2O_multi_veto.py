@@ -100,6 +100,12 @@ except ImportError:
                 'thin': (90, 300),
             }
         }
+        HIGHLIGHT_FIT_CONFIG = {
+            'bins': 120,
+            'hist_range': (0, 120),
+            'fit_window_half_width_pe': 12.0,
+            'min_fit_points': 6,
+        }
     config = DefaultConfig()
 
 PANEL_GROUP = {
@@ -804,6 +810,20 @@ class RunProcessor:
         mu1_values_run, ll_hist_counts, ll_bin_edges = self._process_low_light_events(
             ll_events, ll_dir, run, M1_or_M2, low_light_fit_range
         )
+
+        # Highlight events (triggerBits == 8): PMT PE spectra and Gaussian peak extraction
+        highlight_dir = run_dir / "highlight"
+        self.file_handler.ensure_dir(highlight_dir)
+        highlight_events = df_all[df_all['triggerBits'] == 8]
+        highlight_fit_config = self._get_default_highlight_fit_config()
+        hl_hist_counts, hl_bin_edges, hl_summary_df = self._fit_and_plot_highlight_pe(
+            highlight_events,
+            mu1_values_run,
+            highlight_dir,
+            f'Run{run}',
+            M1_or_M2,
+            highlight_fit_config
+        )
         
         # Calculate derived quantities
         df_all = self._calculate_derived_quantities(df_all, mu1_values_run, multiplicity_spe)
@@ -844,7 +864,25 @@ class RunProcessor:
             'valid_bin_count': veto_summary.get('valid_bin_count', 0),
             'total_trig2': veto_summary.get('total_trig2', 0),
             'total_trig2_or_34': veto_summary.get('total_trig2_or_34', 0),
+            'mu1_values': [float(x) if np.isfinite(x) else np.nan for x in np.asarray(mu1_values_run, dtype=float)],
         }
+
+        hl_peak = np.full(12, np.nan)
+        hl_peak_err = np.full(12, np.nan)
+        if hl_summary_df is not None and not hl_summary_df.empty:
+            for _, row in hl_summary_df.iterrows():
+                ch = int(row['channel'])
+                if 0 <= ch < 12:
+                    peak_val = row.get('peak_pe', np.nan)
+                    peak_err_val = row.get('peak_pe_err', np.nan)
+                    hl_peak[ch] = float(peak_val) if pd.notna(peak_val) else np.nan
+                    hl_peak_err[ch] = float(peak_err_val) if pd.notna(peak_err_val) else np.nan
+
+        finite_hl = hl_peak[np.isfinite(hl_peak)]
+        run_veto_summary['highlight_peak_pe'] = [float(x) if np.isfinite(x) else np.nan for x in hl_peak]
+        run_veto_summary['highlight_peak_pe_err'] = [float(x) if np.isfinite(x) else np.nan for x in hl_peak_err]
+        run_veto_summary['highlight_avg_pe'] = float(np.mean(finite_hl)) if finite_hl.size > 0 else np.nan
+
         with open(run_dir / "run_veto_summary.json", "w") as f:
             json.dump(run_veto_summary, f, indent=4)
         
@@ -923,6 +961,7 @@ class RunProcessor:
             dt_vals, pe_vals, mult_vals = cut_results
             return (dt_vals, pe_vals, mult_vals,
                    ll_hist_counts, ll_bin_edges,
+                   hl_hist_counts, hl_bin_edges,
                    sipm_events_df, pe_trig2, pe_trig2_or_34,
                    tv_hist_counts, tv_bin_edges,
                    brn_data,
@@ -931,6 +970,7 @@ class RunProcessor:
         else:
             return (None, None, None,
                    ll_hist_counts, ll_bin_edges,
+                   hl_hist_counts, hl_bin_edges,
                    sipm_events_df, pd.Series(dtype=float), pd.Series(dtype=float),
                    tv_hist_counts, tv_bin_edges,
                    brn_data,
@@ -957,6 +997,15 @@ class RunProcessor:
             })
         }
 
+    def _get_default_highlight_fit_config(self):
+        cfg = getattr(config, 'HIGHLIGHT_FIT_CONFIG', {}) or {}
+        return {
+            'bins': int(cfg.get('bins', 120)),
+            'hist_range': tuple(cfg.get('hist_range', (0, 120))),
+            'fit_window_half_width_pe': float(cfg.get('fit_window_half_width_pe', 12.0)),
+            'min_fit_points': int(cfg.get('min_fit_points', 6)),
+        }
+
     @staticmethod
     def _landau_plus_exp(x, A, mpv, sigma, tau, B, x0, C):
         return A * landau_dist.pdf(x, loc=mpv, scale=sigma) + B * np.exp(-(x - x0) / tau) + C
@@ -972,6 +1021,11 @@ class RunProcessor:
     def _extract_channel_data(df_muon, j):
         arr = np.array(df_muon['pulseH_array'].to_list())
         return arr[:, j].astype(float)
+
+    @staticmethod
+    def _gaussian(x, amp, mu, sigma, c):
+        sigma = np.maximum(sigma, 1e-6)
+        return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2) + c
 
     def _fit_one_sipm_channel_hist(self, data, bins, hist_range, fit_range, mpv_bounds):
         counts, edges = np.histogram(data, bins=bins, range=hist_range)
@@ -1207,6 +1261,188 @@ class RunProcessor:
         print(f"SiPM pulseH fit summary saved to {summary_pkl_path}")
 
         return fit_results_data
+
+    def _fit_and_plot_highlight_pe(self, highlight_events_df, mu1_values_run, output_dir, file_label, M1_or_M2, fit_config):
+        self.file_handler.ensure_dir(output_dir)
+
+        bins = int(fit_config['bins'])
+        hist_range = tuple(fit_config['hist_range'])
+        fit_half_width = float(fit_config['fit_window_half_width_pe'])
+        min_fit_points = int(fit_config['min_fit_points'])
+
+        edges = np.linspace(hist_range[0], hist_range[1], bins + 1)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+
+        fig, axes = plt.subplots(3, 4, figsize=(20, 15))
+        fig.suptitle(f'Highlight PMT P.E. Spectra (triggerBits=8) ({file_label}, {M1_or_M2})', fontsize=16)
+        axes = axes.flatten()
+
+        records = []
+        hist_counts = {}
+        fit_results_data = {}
+
+        if highlight_events_df.empty:
+            area_data = np.empty((0, len(config.PMT_CHANNELS)))
+        else:
+            area_data = np.array(highlight_events_df['area_array'].to_list())[:, config.PMT_CHANNELS]
+
+        for i in range(12):
+            ax = axes[i]
+            mu1 = mu1_values_run[i] if i < len(mu1_values_run) else np.nan
+
+            if area_data.size == 0 or (not np.isfinite(mu1)) or mu1 <= 0:
+                counts = np.zeros(bins, dtype=float)
+                hist_counts[i] = counts
+                fit_results_data[i] = {
+                    'counts': counts,
+                    'edges': edges,
+                    'popt': None,
+                    'perr': None,
+                    'peak_pe': np.nan,
+                    'peak_pe_err': np.nan,
+                    'n_events': 0,
+                }
+                reason = 'No events' if area_data.size == 0 else 'Invalid $\\mu_1$'
+                ax.text(0.5, 0.5, reason, transform=ax.transAxes, ha='center', va='center', color='red')
+                ax.set_title(f'Channel {i}')
+                ax.set_xlabel('P.E. (Area / $\\mu_1$)')
+                ax.set_ylabel('Events')
+                ax.set_xlim(hist_range)
+                ax.grid(True, which='both', linestyle=':')
+                records.append({'channel': i, 'peak_pe': np.nan, 'peak_pe_err': np.nan, 'n_events': 0})
+                continue
+
+            ch_pe = area_data[:, i].astype(float) / mu1
+            ch_pe = ch_pe[np.isfinite(ch_pe)]
+            counts, _ = np.histogram(ch_pe, bins=edges)
+            hist_counts[i] = counts
+
+            ax.step(edges, np.append(counts, counts[-1] if len(counts) > 0 else 0), where='post', alpha=0.8, label=f'N={len(ch_pe)}')
+
+            peak_pe = np.nan
+            peak_pe_err = np.nan
+            popt_out = None
+            perr_out = None
+
+            if np.any(counts > 0):
+                peak_idx = int(np.argmax(counts))
+                peak_guess = float(centers[peak_idx])
+                sigma_guess = max(float(np.std(ch_pe)) if ch_pe.size > 1 else 1.0, 0.2)
+                amp_guess = max(float(np.max(counts) - np.min(counts)), 1.0)
+                c_guess = float(np.min(counts))
+
+                # Preferred fit region: FWHM window around peak (half-maximum crossings)
+                y_half = 0.5 * float(counts[peak_idx])
+                x_left = None
+                x_right = None
+
+                for idx_l in range(peak_idx, 0, -1):
+                    y0 = float(counts[idx_l - 1])
+                    y1 = float(counts[idx_l])
+                    if (y0 <= y_half <= y1) or (y1 <= y_half <= y0):
+                        x0 = float(centers[idx_l - 1])
+                        x1 = float(centers[idx_l])
+                        if abs(y1 - y0) > 1e-12:
+                            frac = (y_half - y0) / (y1 - y0)
+                            x_left = x0 + frac * (x1 - x0)
+                        else:
+                            x_left = x1
+                        break
+
+                for idx_r in range(peak_idx, len(counts) - 1):
+                    y0 = float(counts[idx_r])
+                    y1 = float(counts[idx_r + 1])
+                    if (y0 >= y_half >= y1) or (y1 >= y_half >= y0):
+                        x0 = float(centers[idx_r])
+                        x1 = float(centers[idx_r + 1])
+                        if abs(y1 - y0) > 1e-12:
+                            frac = (y_half - y0) / (y1 - y0)
+                            x_right = x0 + frac * (x1 - x0)
+                        else:
+                            x_right = x0
+                        break
+
+                if (x_left is not None) and (x_right is not None) and (x_right > x_left):
+                    fit_lo = max(hist_range[0], x_left)
+                    fit_hi = min(hist_range[1], x_right)
+                else:
+                    fit_lo = max(hist_range[0], peak_guess - fit_half_width)
+                    fit_hi = min(hist_range[1], peak_guess + fit_half_width)
+
+                fit_mask = (centers >= fit_lo) & (centers <= fit_hi) & (counts > 0)
+
+                if np.count_nonzero(fit_mask) >= min_fit_points:
+                    x_fit = centers[fit_mask]
+                    y_fit = counts[fit_mask]
+                    try:
+                        popt, pcov = curve_fit(
+                            self._gaussian,
+                            x_fit,
+                            y_fit,
+                            p0=[amp_guess, peak_guess, sigma_guess, c_guess],
+                            bounds=([0.0, hist_range[0], 1e-3, 0.0], [np.inf, hist_range[1], np.inf, np.inf]),
+                            maxfev=30000
+                        )
+                        perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.full(len(popt), np.nan)
+
+                        peak_pe = float(popt[1])
+                        peak_pe_err = float(perr[1]) if len(perr) > 1 and np.isfinite(perr[1]) else np.nan
+                        popt_out = popt
+                        perr_out = perr
+
+                        x_plot = np.linspace(fit_lo, fit_hi, 300)
+                        ax.plot(x_plot, self._gaussian(x_plot, *popt), 'r-', linewidth=1.5,
+                                label=f'Fit peak={peak_pe:.2f} p.e.')
+                    except Exception:
+                        peak_pe = peak_guess
+                        peak_pe_err = np.nan
+                else:
+                    peak_pe = peak_guess
+                    peak_pe_err = np.nan
+
+            fit_results_data[i] = {
+                'counts': counts,
+                'edges': edges,
+                'popt': popt_out,
+                'perr': perr_out,
+                'peak_pe': peak_pe,
+                'peak_pe_err': peak_pe_err,
+                'n_events': int(ch_pe.size),
+            }
+            records.append({'channel': i, 'peak_pe': peak_pe, 'peak_pe_err': peak_pe_err, 'n_events': int(ch_pe.size)})
+
+            if np.isfinite(peak_pe):
+                ax.text(0.98, 0.95, f'Peak={peak_pe:.2f} p.e.', transform=ax.transAxes,
+                        ha='right', va='top', fontsize=9,
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.6))
+            ax.set_title(f'Channel {i}')
+            ax.set_xlabel('P.E. (Area / $\\mu_1$)')
+            ax.set_ylabel('Events')
+            ax.set_xlim(hist_range)
+            ax.grid(True, which='both', linestyle=':')
+            ax.legend(loc='best', fontsize='small')
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+
+        filename_label = file_label.replace(" ", "_").replace("-", "_").replace(":", "")
+        base_filename = f'{filename_label}_{M1_or_M2}_highlight_pe_fits'
+        img_save_path = output_dir / f'{base_filename}.png'
+        pkl_save_path = output_dir / f'{base_filename}.pkl'
+        summary_pkl_path = output_dir / f'{base_filename}_summary.pkl'
+        summary_csv_path = output_dir / f'{base_filename}_summary.csv'
+
+        plt.savefig(img_save_path)
+        self.file_handler.save_pickle(fit_results_data, pkl_save_path)
+        summary_df = pd.DataFrame(records).sort_values('channel')
+        summary_df.to_pickle(summary_pkl_path)
+        summary_df.to_csv(summary_csv_path, index=False)
+        plt.close(fig)
+
+        print(f"Highlight P.E. fits saved to {img_save_path}")
+        print(f"Highlight P.E. fit data saved to {pkl_save_path}")
+        print(f"Highlight P.E. fit summary saved to {summary_pkl_path}")
+
+        return hist_counts, edges, summary_df
 
     def _process_low_light_events(self, ll_events, ll_dir, run, M1_or_M2, low_light_fit_range):
         """Process low-light events and perform fitting."""
@@ -1494,10 +1730,12 @@ def main():
         'sipm_events': [],
         'pe_trig2': [], 'pe_trig2_or_34': [],
         'low_light_hists': [],
+        'highlight_hists': [],
         'thin_veto_hists': [],
         'brn_channel_data': []
     }
     ll_bin_edges_agg = None
+    hl_bin_edges_agg = None
     tv_bin_edges_agg = None
     total_subjob_timelength_ns = 0.0
 
@@ -1518,6 +1756,7 @@ def main():
                 if result:
                     (dt_vals, pe_vals, mult_vals,
                      ll_hists, ll_edges,
+                     hl_hists, hl_edges,
                      sipm_df, pe_2, pe_2_or_34,
                      tv_hists, tv_edges,
                      brn_data,
@@ -1535,6 +1774,10 @@ def main():
                 aggregated['low_light_hists'].append(ll_hists)
                 if ll_bin_edges_agg is None: 
                     ll_bin_edges_agg = ll_edges
+
+                aggregated['highlight_hists'].append(hl_hists)
+                if hl_bin_edges_agg is None:
+                    hl_bin_edges_agg = hl_edges
                 
                 if not sipm_df.empty: 
                     aggregated['sipm_events'].append(sipm_df)
@@ -1587,6 +1830,15 @@ def main():
                     job_ll_master_counts[ch] += run_hists.get(ch, 0)
             ll_save_data = {'counts': job_ll_master_counts, 'edges': ll_bin_edges_agg}
             FileHandler.save_pickle(ll_save_data, output_dir / 'aggregated_low_light_hists.pkl')
+
+        # Save highlight histogram data
+        if aggregated['highlight_hists'] and hl_bin_edges_agg is not None:
+            job_hl_master_counts = {ch: np.zeros_like(aggregated['highlight_hists'][0][ch]) for ch in range(12)}
+            for run_hists in aggregated['highlight_hists']:
+                for ch in range(12):
+                    job_hl_master_counts[ch] += run_hists.get(ch, 0)
+            hl_save_data = {'counts': job_hl_master_counts, 'edges': hl_bin_edges_agg}
+            FileHandler.save_pickle(hl_save_data, output_dir / 'aggregated_highlight_hists.pkl')
         
         # Save thin veto histogram data
         if aggregated['thin_veto_hists'] and tv_bin_edges_agg is not None:

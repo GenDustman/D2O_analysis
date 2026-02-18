@@ -441,6 +441,149 @@ class BinnedDataPlotter:
         print(f"Low-light fit data saved to {pkl_save_path}")
         plt.close(fig)
 
+    def fit_and_plot_highlight_from_binned_data(self, hist_data, bin_edges, output_dir, file_label,
+                                                M1_or_M2, hist_range):
+        """Plots and fits highlight P.E. spectra for PMT channels 0-11 from pre-binned data."""
+        def gaussian(x, amp, mu, sigma, c):
+            sigma = np.maximum(sigma, 1e-6)
+            return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2) + c
+
+        fig, axes = plt.subplots(3, 4, figsize=(20, 15))
+        fig.suptitle(f'Highlight PMT P.E. Fits ({file_label}, {M1_or_M2})', fontsize=16)
+        axes = axes.flatten()
+
+        centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        fit_results_data = {}
+        records = []
+
+        for i in range(12):
+            ax = axes[i]
+            counts = np.asarray(hist_data.get(i, np.zeros(len(centers))), dtype=float)
+            ax.step(bin_edges, np.append(counts, counts[-1] if len(counts) > 0 else 0), where='post', alpha=0.8, label=f'Ch {i}')
+
+            peak_pe = np.nan
+            peak_pe_err = np.nan
+            popt_out = None
+            perr_out = None
+
+            if np.any(counts > 0):
+                peak_idx = int(np.argmax(counts))
+                peak_guess = float(centers[peak_idx])
+                amp_guess = max(float(np.max(counts) - np.min(counts)), 1.0)
+                total_w = float(np.sum(counts))
+                if total_w > 1:
+                    mean_w = float(np.sum(centers * counts) / total_w)
+                    var_w = float(np.sum(counts * (centers - mean_w) ** 2) / total_w)
+                    sigma_guess = max(np.sqrt(max(var_w, 1e-6)), 0.2)
+                else:
+                    sigma_guess = 1.0
+                c_guess = float(np.min(counts))
+
+                fit_half_width = float(getattr(config, 'HIGHLIGHT_FIT_CONFIG', {}).get('fit_window_half_width_pe', 12.0))
+                min_fit_points = int(getattr(config, 'HIGHLIGHT_FIT_CONFIG', {}).get('min_fit_points', 6))
+
+                # Preferred fit region: FWHM window around peak (half-maximum crossings)
+                y_half = 0.5 * float(counts[peak_idx])
+                x_left = None
+                x_right = None
+
+                for idx_l in range(peak_idx, 0, -1):
+                    y0 = float(counts[idx_l - 1])
+                    y1 = float(counts[idx_l])
+                    if (y0 <= y_half <= y1) or (y1 <= y_half <= y0):
+                        x0 = float(centers[idx_l - 1])
+                        x1 = float(centers[idx_l])
+                        if abs(y1 - y0) > 1e-12:
+                            frac = (y_half - y0) / (y1 - y0)
+                            x_left = x0 + frac * (x1 - x0)
+                        else:
+                            x_left = x1
+                        break
+
+                for idx_r in range(peak_idx, len(counts) - 1):
+                    y0 = float(counts[idx_r])
+                    y1 = float(counts[idx_r + 1])
+                    if (y0 >= y_half >= y1) or (y1 >= y_half >= y0):
+                        x0 = float(centers[idx_r])
+                        x1 = float(centers[idx_r + 1])
+                        if abs(y1 - y0) > 1e-12:
+                            frac = (y_half - y0) / (y1 - y0)
+                            x_right = x0 + frac * (x1 - x0)
+                        else:
+                            x_right = x0
+                        break
+
+                if (x_left is not None) and (x_right is not None) and (x_right > x_left):
+                    fit_lo = max(hist_range[0], x_left)
+                    fit_hi = min(hist_range[1], x_right)
+                else:
+                    fit_lo = max(hist_range[0], peak_guess - fit_half_width)
+                    fit_hi = min(hist_range[1], peak_guess + fit_half_width)
+
+                fit_mask = (centers >= fit_lo) & (centers <= fit_hi) & (counts > 0)
+
+                if np.count_nonzero(fit_mask) >= min_fit_points:
+                    try:
+                        popt, pcov = curve_fit(
+                            gaussian,
+                            centers[fit_mask],
+                            counts[fit_mask],
+                            p0=[amp_guess, peak_guess, sigma_guess, c_guess],
+                            bounds=([0.0, hist_range[0], 1e-3, 0.0], [np.inf, hist_range[1], np.inf, np.inf]),
+                            maxfev=30000
+                        )
+                        perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.full(len(popt), np.nan)
+                        peak_pe = float(popt[1])
+                        peak_pe_err = float(perr[1]) if len(perr) > 1 and np.isfinite(perr[1]) else np.nan
+                        popt_out = popt
+                        perr_out = perr
+                        x_plot = np.linspace(fit_lo, fit_hi, 300)
+                        ax.plot(x_plot, gaussian(x_plot, *popt), 'r-', linewidth=1.5, label=f'Fit peak={peak_pe:.2f} p.e.')
+                    except Exception:
+                        peak_pe = peak_guess
+                else:
+                    peak_pe = peak_guess
+
+            fit_results_data[i] = {
+                'counts': counts,
+                'edges': bin_edges,
+                'popt': popt_out,
+                'perr': perr_out,
+                'peak_pe': peak_pe,
+                'peak_pe_err': peak_pe_err,
+            }
+            records.append({'channel': i, 'peak_pe': peak_pe, 'peak_pe_err': peak_pe_err})
+
+            if np.isfinite(peak_pe):
+                ax.text(0.98, 0.95, f'Peak={peak_pe:.2f} p.e.', transform=ax.transAxes,
+                        ha='right', va='top', fontsize=9,
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.6))
+            ax.set_title(f'Channel {i}')
+            ax.set_xlabel('P.E. (Area / $\\mu_1$)')
+            ax.set_ylabel('Events')
+            ax.set_xlim(hist_range)
+            ax.grid(True, which='both', linestyle=':')
+            ax.legend(loc='best', fontsize='small')
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+        self.file_handler.ensure_dir(output_dir)
+
+        filename_label = file_label.replace(" ", "_").replace("-", "_").replace(":", "")
+        base_filename = f'{filename_label}_{M1_or_M2}_highlight_pe_fits_master'
+        img_save_path = output_dir / f'{base_filename}.png'
+        pkl_save_path = output_dir / f'{base_filename}.pkl'
+        summary_pkl_path = output_dir / f'{base_filename}_summary.pkl'
+        summary_csv_path = output_dir / f'{base_filename}_summary.csv'
+
+        plt.savefig(img_save_path)
+        self.file_handler.save_pickle(fit_results_data, pkl_save_path)
+        summary_df = pd.DataFrame(records).sort_values('channel')
+        summary_df.to_pickle(summary_pkl_path)
+        summary_df.to_csv(summary_csv_path, index=False)
+        print(f"Highlight fits saved to {img_save_path}")
+        print(f"Highlight fit data saved to {pkl_save_path}")
+        plt.close(fig)
+
 # Simplified aggregate_plots function for compatibility
 def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
                    output_dir, m1_or_m2, agg_label, logscale_dt, logscale_pe, do_tau_fit):
@@ -607,6 +750,11 @@ class MasterAggregator:
         self.master_ll_hist_counts = None
         self.ll_data_found = False
 
+        # Highlight data
+        self.hl_bin_edges = None
+        self.master_hl_hist_counts = None
+        self.hl_data_found = False
+
         # Thin veto data
         self.tv_height_bin_edges = None
         self.master_tv_muon_h_counts = None
@@ -634,6 +782,7 @@ class MasterAggregator:
             self._load_veto_data(sub_dir)
             self._load_run_level_veto_data(sub_dir)
             self._load_low_light_data(sub_dir)
+            self._load_highlight_data(sub_dir)
             self._load_thin_veto_data(sub_dir)
             self._load_brn_data(sub_dir)
             self._load_time_length_data(sub_dir)
@@ -742,6 +891,23 @@ class MasterAggregator:
                 except (TypeError, ValueError):
                     avg_err_val = np.nan
 
+                mu1_values = np.asarray(info.get('mu1_values', [np.nan] * 12), dtype=float)
+                if mu1_values.size != 12:
+                    mu1_values = np.full(12, np.nan)
+
+                hl_peak = np.asarray(info.get('highlight_peak_pe', [np.nan] * 12), dtype=float)
+                if hl_peak.size != 12:
+                    hl_peak = np.full(12, np.nan)
+
+                hl_peak_err = np.asarray(info.get('highlight_peak_pe_err', [np.nan] * 12), dtype=float)
+                if hl_peak_err.size != 12:
+                    hl_peak_err = np.full(12, np.nan)
+
+                try:
+                    hl_avg_val = float(info.get('highlight_avg_pe', np.nan))
+                except (TypeError, ValueError):
+                    hl_avg_val = np.nan
+
                 if run_number is None:
                     continue
 
@@ -755,6 +921,10 @@ class MasterAggregator:
                     'valid_bin_count': int(info.get('valid_bin_count', 0)),
                     'total_trig2': int(info.get('total_trig2', 0)),
                     'total_trig2_or_34': int(info.get('total_trig2_or_34', 0)),
+                    'mu1_values': mu1_values,
+                    'highlight_peak_pe': hl_peak,
+                    'highlight_peak_pe_err': hl_peak_err,
+                    'highlight_avg_pe': hl_avg_val if np.isfinite(hl_avg_val) else np.nan,
                 })
             except Exception as e:
                 print(f"  Warning: Could not read run-level veto summary from {summary_file}. Error: {e}")
@@ -778,6 +948,25 @@ class MasterAggregator:
                         
             except Exception as e:
                 print(f"  Warning: Could not process Low-Light data for {sub_dir.name}. Error: {e}")
+
+    def _load_highlight_data(self, sub_dir):
+        """Load and sum highlight histogram data."""
+        hl_file = sub_dir / 'aggregated_highlight_hists.pkl'
+        if hl_file.exists():
+            self.hl_data_found = True
+            try:
+                with open(hl_file, 'rb') as f:
+                    hl_data = pickle.load(f)
+                job_hl_counts = hl_data['counts']
+
+                if self.master_hl_hist_counts is None:
+                    self.master_hl_hist_counts = {ch: np.asarray(job_hl_counts.get(ch, 0), dtype=float).copy() for ch in range(12)}
+                    self.hl_bin_edges = np.asarray(hl_data['edges'], dtype=float)
+                else:
+                    for ch in range(12):
+                        self.master_hl_hist_counts[ch] += np.asarray(job_hl_counts.get(ch, 0), dtype=float)
+            except Exception as e:
+                print(f"  Warning: Could not process Highlight data for {sub_dir.name}. Error: {e}")
 
     def _load_thin_veto_data(self, sub_dir):
         """Load and sum thin veto histogram data."""
@@ -865,10 +1054,43 @@ class MasterAggregator:
         self._generate_main_plots()
         self._generate_veto_plots()
         self._generate_veto_efficiency_evolution_plot()
+        self._generate_mu1_evolution_plot()
         self._generate_low_light_plots()
+        self._generate_highlight_plots()
+        self._generate_highlight_evolution_plot()
         self._generate_sipm_plots()
         self._generate_thin_veto_plots()
         self._generate_brn_plots()
+
+    def _prepare_evolution_x(self, run_df):
+        """Prepare x-axis values for evolution plots with date-first fallback to run number."""
+        has_datetime = run_df['run_datetime'].notna().any()
+        if has_datetime:
+            run_df = run_df.sort_values('run_datetime')
+            x = run_df['run_datetime'].to_list()
+            x_label = 'Run Start Time'
+            use_dates = True
+        else:
+            run_df = run_df.sort_values('run')
+            x = run_df['run'].to_numpy()
+            x_label = 'Run Number (start time unavailable)'
+            use_dates = False
+        return run_df, x, x_label, use_dates
+
+    def _format_evolution_xaxis(self, ax, run_df, use_dates):
+        """Apply adaptive x ticks with at most 6 major ticks."""
+        if use_dates:
+            locator = mdates.AutoDateLocator(maxticks=6)
+            formatter = mdates.DateFormatter('%Y-%m-%d\n%H:00')
+            ax.xaxis.set_major_locator(locator)
+            ax.xaxis.set_major_formatter(formatter)
+            plt.gcf().autofmt_xdate(rotation=0, ha='center')
+        else:
+            max_ticks = min(6, len(run_df))
+            if max_ticks > 0:
+                idx = np.unique(np.linspace(0, len(run_df) - 1, max_ticks, dtype=int))
+                tick_x = run_df['run'].to_numpy()[idx]
+                ax.set_xticks(tick_x)
 
     def _generate_main_plots(self):
         """Generate delta_t, total_pe, and correlation plots."""
@@ -931,18 +1153,7 @@ class MasterAggregator:
             print("Run-level veto summaries are present, but no valid average efficiency values were found.")
             return
 
-        has_datetime = run_df['run_datetime'].notna().any()
-
-        if has_datetime:
-            run_df = run_df.sort_values('run_datetime')
-            x = run_df['run_datetime'].to_list()
-            x_label = 'Run Start Time'
-            use_dates = True
-        else:
-            run_df = run_df.sort_values('run')
-            x = run_df['run'].to_numpy()
-            x_label = 'Run Number (start time unavailable)'
-            use_dates = False
+        run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
 
         y = run_df['average_efficiency'].to_numpy()
         yerr = run_df['average_efficiency_error'].to_numpy()
@@ -962,19 +1173,8 @@ class MasterAggregator:
         plt.grid(True, which='minor', linestyle=':', linewidth=0.5)
         plt.minorticks_on()
 
-        if use_dates:
-            ax = plt.gca()
-            locator = mdates.AutoDateLocator(maxticks=6)
-            formatter = mdates.DateFormatter('%Y-%m-%d\n%H:00')
-            ax.xaxis.set_major_locator(locator)
-            ax.xaxis.set_major_formatter(formatter)
-            plt.gcf().autofmt_xdate(rotation=0, ha='center')
-        else:
-            max_ticks = min(6, len(run_df))
-            if max_ticks > 0:
-                idx = np.unique(np.linspace(0, len(run_df) - 1, max_ticks, dtype=int))
-                tick_x = run_df['run'].to_numpy()[idx]
-                plt.xticks(tick_x)
+        ax = plt.gca()
+        self._format_evolution_xaxis(ax, run_df, use_dates)
 
         plt.legend()
         plt.tight_layout()
@@ -1001,6 +1201,140 @@ class MasterAggregator:
         out_df.to_csv(csv_path, index=False)
         print(f"Veto efficiency evolution plot saved to {img_path}")
         print(f"Veto efficiency evolution data saved to {pkl_path}")
+
+    def _generate_mu1_evolution_plot(self):
+        """Generate mu1 evolution for all 12 PMT channels."""
+        if not self.run_veto_summaries:
+            print("No per-run summary data found for mu1 evolution plot.")
+            return
+
+        run_df = pd.DataFrame(self.run_veto_summaries)
+        if 'mu1_values' not in run_df.columns:
+            print("No mu1 values found in run summaries.")
+            return
+
+        run_df = run_df[run_df['mu1_values'].apply(lambda v: isinstance(v, (list, np.ndarray)) and len(v) == 12)]
+        if run_df.empty:
+            print("Run summaries present, but no valid mu1 arrays were found.")
+            return
+
+        run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+
+        plt.figure(figsize=(13, 7))
+        cmap = plt.cm.get_cmap('tab20', 12)
+        for ch in range(12):
+            y = run_df['mu1_values'].apply(lambda arr: float(np.asarray(arr, dtype=float)[ch])).to_numpy()
+            plt.plot(x, y, marker='o', linewidth=1.2, markersize=3.5, color=cmap(ch), label=f'PMT {ch}')
+
+        plt.ylabel('$\\mu_1$ Area (ADC)')
+        plt.xlabel(x_label)
+        plt.title(f'Low-Light $\\mu_1$ Evolution by Run ({self.agg_label}, {self.m1_or_m2})')
+        plt.grid(True, which='major', linestyle='-', linewidth=0.7)
+        plt.grid(True, which='minor', linestyle=':', linewidth=0.5)
+        plt.minorticks_on()
+        ax = plt.gca()
+        self._format_evolution_xaxis(ax, run_df, use_dates)
+        plt.legend(ncol=3, fontsize='small')
+        plt.tight_layout()
+
+        img_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_mu1_evolution.png"
+        pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_mu1_evolution.pkl"
+        csv_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_mu1_evolution.csv"
+        plt.savefig(img_path)
+        plt.close()
+
+        out_df = run_df[['run', 'run_dir', 'run_start_time']].copy()
+        mu1_matrix = np.vstack(run_df['mu1_values'].apply(lambda arr: np.asarray(arr, dtype=float)).to_numpy())
+        for ch in range(12):
+            out_df[f'mu1_ch{ch}'] = mu1_matrix[:, ch]
+        if use_dates:
+            out_df['run_datetime'] = pd.to_datetime(run_df['run_datetime']).dt.strftime('%Y-%m-%d %H:00')
+        else:
+            out_df['run_datetime'] = pd.NA
+
+        with open(pkl_path, 'wb') as f:
+            pickle.dump({'plot_data': out_df.to_dict(orient='list')}, f)
+        out_df.to_csv(csv_path, index=False)
+        print(f"mu1 evolution plot saved to {img_path}")
+
+    def _generate_highlight_plots(self):
+        """Generate aggregated highlight PMT PE fit plots."""
+        if self.hl_data_found and self.master_hl_hist_counts is not None and self.hl_bin_edges is not None:
+            print("Plotting aggregated highlight PMT P.E. data...")
+            hl_cfg = getattr(config, 'HIGHLIGHT_FIT_CONFIG', {}) or {}
+            hist_range = tuple(hl_cfg.get('hist_range', (float(self.hl_bin_edges[0]), float(self.hl_bin_edges[-1]))))
+            self.binned_plotter.fit_and_plot_highlight_from_binned_data(
+                self.master_hl_hist_counts,
+                self.hl_bin_edges,
+                self.master_output_dir,
+                self.agg_label,
+                self.m1_or_m2,
+                hist_range=hist_range,
+            )
+        else:
+            print("No Highlight data found to plot.")
+
+    def _generate_highlight_evolution_plot(self):
+        """Generate highlight peak evolution for 12 PMTs + average line."""
+        if not self.run_veto_summaries:
+            print("No per-run summary data found for highlight evolution plot.")
+            return
+
+        run_df = pd.DataFrame(self.run_veto_summaries)
+        if 'highlight_peak_pe' not in run_df.columns:
+            print("No highlight peak values found in run summaries.")
+            return
+
+        run_df = run_df[run_df['highlight_peak_pe'].apply(lambda v: isinstance(v, (list, np.ndarray)) and len(v) == 12)]
+        if run_df.empty:
+            print("Run summaries present, but no valid highlight peak arrays were found.")
+            return
+
+        run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+        peak_matrix = np.vstack(run_df['highlight_peak_pe'].apply(lambda arr: np.asarray(arr, dtype=float)).to_numpy())
+        err_matrix = np.vstack(run_df['highlight_peak_pe_err'].apply(lambda arr: np.asarray(arr, dtype=float)).to_numpy()) if 'highlight_peak_pe_err' in run_df.columns else np.full_like(peak_matrix, np.nan)
+        avg_vals = run_df['highlight_avg_pe'].to_numpy(dtype=float) if 'highlight_avg_pe' in run_df.columns else np.nanmean(peak_matrix, axis=1)
+
+        plt.figure(figsize=(13, 7))
+        cmap = plt.cm.get_cmap('tab20', 12)
+        for ch in range(12):
+            y = peak_matrix[:, ch]
+            yerr = np.where(np.isfinite(err_matrix[:, ch]), err_matrix[:, ch], 0.0)
+            plt.errorbar(x, y, yerr=yerr, fmt='o-', markersize=3.0, linewidth=1.0, capsize=1.5,
+                         color=cmap(ch), alpha=0.9, label=f'PMT {ch}')
+
+        plt.plot(x, avg_vals, 'k--', linewidth=2.0, marker='s', markersize=4.0, label='Average (12 PMTs)')
+        plt.ylabel('Highlight Peak (P.E.)')
+        plt.xlabel(x_label)
+        plt.title(f'Highlight Peak Evolution by Run ({self.agg_label}, {self.m1_or_m2})')
+        plt.grid(True, which='major', linestyle='-', linewidth=0.7)
+        plt.grid(True, which='minor', linestyle=':', linewidth=0.5)
+        plt.minorticks_on()
+        ax = plt.gca()
+        self._format_evolution_xaxis(ax, run_df, use_dates)
+        plt.legend(ncol=3, fontsize='small')
+        plt.tight_layout()
+
+        img_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_highlight_peak_evolution.png"
+        pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_highlight_peak_evolution.pkl"
+        csv_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_highlight_peak_evolution.csv"
+        plt.savefig(img_path)
+        plt.close()
+
+        out_df = run_df[['run', 'run_dir', 'run_start_time']].copy()
+        for ch in range(12):
+            out_df[f'peak_ch{ch}'] = peak_matrix[:, ch]
+            out_df[f'peak_err_ch{ch}'] = err_matrix[:, ch]
+        out_df['peak_avg_12ch'] = avg_vals
+        if use_dates:
+            out_df['run_datetime'] = pd.to_datetime(run_df['run_datetime']).dt.strftime('%Y-%m-%d %H:00')
+        else:
+            out_df['run_datetime'] = pd.NA
+
+        with open(pkl_path, 'wb') as f:
+            pickle.dump({'plot_data': out_df.to_dict(orient='list')}, f)
+        out_df.to_csv(csv_path, index=False)
+        print(f"Highlight peak evolution plot saved to {img_path}")
 
     def _generate_low_light_plots(self):
         """Generate low-light fit plots."""
@@ -1216,6 +1550,7 @@ class MasterAggregator:
             f.write(f"VETO_RANGE: {config.VETO_RANGE}\n")
             f.write(f"TAU_FIT_WINDOW: {config.TAU_FIT_WINDOW}\n")
             f.write(f"LOW_LIGHT_FIT_RANGE: {config.LOW_LIGHT_FIT_RANGE}\n")
+            f.write(f"HIGHLIGHT_FIT_CONFIG: {getattr(config, 'HIGHLIGHT_FIT_CONFIG', {})}\n")
             f.write(f"SIPM_HIST_CONFIG: {config.SIPM_HIST_CONFIG}\n")
             f.write(f"PERFORM_THIN_VETO_ANALYSIS: {config.PERFORM_THIN_VETO_ANALYSIS}\n")
             f.write(f"PERFORM_BRN_ANALYSIS: {config.PERFORM_BRN_ANALYSIS}\n")

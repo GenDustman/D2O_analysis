@@ -78,6 +78,15 @@ SIPM_PULSEH_FIT_CONFIG = {
         'thin': (90, 300),
     }
 }
+
+# --- Highlight (triggerBits == 8) PMT P.E. analysis ---
+HIGHLIGHT_FIT_CONFIG = {
+    'bins': 120,
+    'hist_range': (0, 120),
+    'fit_window_half_width_pe': 12.0,
+    'min_fit_points': 6,
+}
+
 # --- Veto Performance Analysis ---
 PERFORM_THIN_VETO_ANALYSIS = False
 THIN_VETO_CHANNELS = [12, 13, 14, 15]   # List of channels to analyze
