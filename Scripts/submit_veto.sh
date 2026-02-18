@@ -8,10 +8,11 @@
 # --- User-Defined Path Configuration ---
 # NEW: Define the absolute path to the directory containing your python scripts.
 SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
+RUN_SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 
 # Hardcoded Run Parameters
 start_run=4598
-end_run=4768
+end_run=4988
 step=10  # NEW: Process every Nth run
 M1_or_M2="M2"
 njobs=30
@@ -34,8 +35,7 @@ SNAPSHOT_DIR="${TOP_OUTPUT_DIR}/code"
 mkdir -p "${SNAPSHOT_DIR}"
 cp "${SCRIPT_DIR}/"*.py "${SNAPSHOT_DIR}/"
 echo "Code snapshot created in: ${SNAPSHOT_DIR}"
-# Update SCRIPT_DIR to use the snapshot
-SCRIPT_DIR="${SNAPSHOT_DIR}"
+echo "Jobs will run using code from: ${RUN_SCRIPT_DIR}"
 
 # Calculate total runs with step
 run_list=()
@@ -64,7 +64,7 @@ while [ $idx -lt $total_runs ]; do
     echo "Submitting processing job ${job}: Runs ${job_start_run} to ${job_end_run} with step ${step}"
     
     # Pass step parameter to Python script
-    JOB_ID=$(sbatch -p "$partition" --parsable -J "job_${job}_${M1_or_M2}" --wrap="python ${SCRIPT_DIR}/Read_Cut_Hist_D2O_multi_veto.py ${job_start_run} ${job_end_run} ${M1_or_M2} ${TOP_OUTPUT_DIR} ${step}")
+    JOB_ID=$(sbatch -p "$partition" --parsable -J "job_${job}_${M1_or_M2}" --wrap="python3 ${RUN_SCRIPT_DIR}/Read_Cut_Hist_D2O_multi_veto.py ${job_start_run} ${job_end_run} ${M1_or_M2} ${TOP_OUTPUT_DIR} ${step}")
     
     JOB_IDS+=($JOB_ID)
     idx=$(( end_idx + 1 ))
@@ -81,6 +81,6 @@ echo "Submitting final aggregation job with dependency list: ${dependency_list}"
 
 sbatch -p "$partition" --dependency=afterok:${dependency_list} \
        -J "aggregate_${M1_or_M2}" \
-       --wrap="python ${SCRIPT_DIR}/aggregate_master_veto.py ${TOP_OUTPUT_DIR}"
+    --wrap="python3 ${RUN_SCRIPT_DIR}/aggregate_master_veto.py ${TOP_OUTPUT_DIR}"
 
 echo "Aggregation job has been submitted. It will run automatically after the others complete."

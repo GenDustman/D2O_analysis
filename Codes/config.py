@@ -60,6 +60,24 @@ SIPM_HIST_CONFIG = {
     'hist_bins': 100,
     'hist_range': (-50, 4000) # (min_adc, max_adc)
 }
+
+# --- SiPM pulseH Landau fit (triggerBits >= 32) ---
+SIPM_PULSEH_FIT_CONFIG = {
+    'enabled': True,
+    'bins': 200,
+    'hist_range': (0, 800),
+    'threshold': 25.0,
+    'fit_ranges_by_panel': {
+        'top': (120, 800),
+        'wide': (160, 800),
+        'thin': (90, 800),
+    },
+    'mpv_bounds_by_panel': {
+        'top': (120, 300),
+        'wide': (160, 400),
+        'thin': (90, 300),
+    }
+}
 # --- Veto Performance Analysis ---
 PERFORM_THIN_VETO_ANALYSIS = False
 THIN_VETO_CHANNELS = [12, 13, 14, 15]   # List of channels to analyze

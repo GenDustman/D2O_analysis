@@ -34,6 +34,13 @@ from scipy.stats import pearsonr
 import uproot
 import awkward as ak
 
+try:
+    from scipy.stats import landau as landau_dist
+    HAVE_TRUE_LANDAU = True
+except Exception:
+    from scipy.stats import moyal as landau_dist
+    HAVE_TRUE_LANDAU = False
+
 # Import configuration or set defaults
 try:
     import config
@@ -77,7 +84,29 @@ except ImportError:
             'area_range': (0, 5000),
             'area_bins': 100
         }
+        SIPM_PULSEH_FIT_CONFIG = {
+            'enabled': True,
+            'bins': 200,
+            'hist_range': (0, 800),
+            'threshold': 25.0,
+            'fit_ranges_by_panel': {
+                'top': (120, 800),
+                'wide': (160, 800),
+                'thin': (90, 800),
+            },
+            'mpv_bounds_by_panel': {
+                'top': (120, 300),
+                'wide': (160, 400),
+                'thin': (90, 300),
+            }
+        }
     config = DefaultConfig()
+
+PANEL_GROUP = {
+    1: "top", 2: "top",
+    3: "top", 4: "wide", 5: "top", 6: "top",
+    7: "top", 8: "thin", 9: "thin", 10: "thin",
+}
 
 class HistogramCalculator:
     """Handles histogram calculations and binning."""
@@ -517,7 +546,13 @@ class Plotter:
         """Calculates and plots veto efficiency as a function of total photoelectrons."""
         if trig2_or_34_pe.size == 0:
             print(f"No events for veto efficiency calculation for {title}. Skipping.")
-            return
+            return {
+                'average_efficiency': np.nan,
+                'average_efficiency_error': np.nan,
+                'valid_bin_count': 0,
+                'total_trig2': int(trig2_pe.size),
+                'total_trig2_or_34': int(trig2_or_34_pe.size)
+            }
 
         # Use vetorange for binning to ensure bins align with display range
         veto_min, veto_max = vetorange
@@ -535,11 +570,13 @@ class Plotter:
         
         ratio = np.divide(counts_2[valid_mask], counts_2_or_34[valid_mask])
         efficiency[valid_mask] = 1 - ratio
-        average_efficiency = np.mean(efficiency[valid_mask & (bin_centers >= vetorange[0]) & (bin_centers <= vetorange[1])])
+        avg_mask = valid_mask & (bin_centers >= vetorange[0]) & (bin_centers <= vetorange[1])
+        average_efficiency = np.mean(efficiency[avg_mask]) if np.any(avg_mask) else np.nan
         
         n = counts_2_or_34[valid_mask]
         p = ratio
         error[valid_mask] = np.sqrt(p * (1 - p) / n)
+        average_efficiency_error = np.sqrt(np.mean(error[avg_mask]**2)) if np.any(avg_mask) else np.nan
 
         # Plotting
         plt.figure(figsize=(10, 6))
@@ -570,6 +607,14 @@ class Plotter:
         self.file_handler.save_pickle(pickle_data, pkl_path)
         print(f"Veto efficiency plot saved to {img_path}")
         print(f"Veto efficiency data saved to {pkl_path}")
+
+        return {
+            'average_efficiency': float(average_efficiency) if np.isfinite(average_efficiency) else np.nan,
+            'average_efficiency_error': float(average_efficiency_error) if np.isfinite(average_efficiency_error) else np.nan,
+            'valid_bin_count': int(np.count_nonzero(avg_mask)),
+            'total_trig2': int(trig2_pe.size),
+            'total_trig2_or_34': int(trig2_or_34_pe.size)
+        }
 
     def plot_correlation_maps(self, df, output_dir, label, M1_or_M2):
         """Plots a 3x3 grid of correlation maps for delta_t, total_pe, and multiplicity."""
@@ -666,8 +711,9 @@ class RunProcessor:
         hist_dir = run_dir / "histograms"
         cut_dir = run_dir / "cuthist"
         ll_dir = run_dir / "lowlight"
+        sipm_fit_dir = run_dir / "sipm_pulseh_fit"
         
-        for dir_path in [hist_dir, cut_dir, ll_dir]:
+        for dir_path in [hist_dir, cut_dir, ll_dir, sipm_fit_dir]:
             self.file_handler.ensure_dir(dir_path)
 
         # Calculate time length and save to file
@@ -689,10 +735,10 @@ class RunProcessor:
                 json.dump(time_data, f, indent=4)
 
         # Process data and generate outputs
-        result = self._process_run_data(df_all, run, run_dir, hist_dir, cut_dir, ll_dir,
+        result = self._process_run_data(df_all, run, run_dir, hist_dir, cut_dir, ll_dir, sipm_fit_dir,
                                       delta_t_cut, pe_cut, bins, veto_bins, vetorange,
                                       multiplicity_spe, multiplicity_cut, time_std_cut,
-                                      logscale, low_light_fit_range, M1_or_M2)
+                          logscale, low_light_fit_range, M1_or_M2, run_start_time_str)
         
         return result, timelength
 
@@ -740,10 +786,10 @@ class RunProcessor:
             return None
         return pd.concat(dfs, ignore_index=True)
 
-    def _process_run_data(self, df_all, run, run_dir, hist_dir, cut_dir, ll_dir,
+    def _process_run_data(self, df_all, run, run_dir, hist_dir, cut_dir, ll_dir, sipm_fit_dir,
                          delta_t_cut, pe_cut, bins, veto_bins, vetorange,
                          multiplicity_spe, multiplicity_cut, time_std_cut,
-                         logscale, low_light_fit_range, M1_or_M2):
+                         logscale, low_light_fit_range, M1_or_M2, run_start_time_str):
         """Process the data for a single run."""
         
         # Plot trigger bits
@@ -785,13 +831,39 @@ class RunProcessor:
         df_all.to_pickle(run_dir / f"run{run}_{M1_or_M2}_data_with_pe.pkl")
         
         # Apply cuts and generate veto efficiency plots
-        cut_results, pe_trig2, pe_trig2_or_34 = self._apply_cuts_and_generate_plots(
+        cut_results, pe_trig2, pe_trig2_or_34, veto_summary = self._apply_cuts_and_generate_plots(
             df_all, run, hist_dir, cut_dir, delta_t_cut, pe_cut, bins, veto_bins,
             vetorange, multiplicity_cut, time_std_cut, logscale, M1_or_M2
         )
+
+        run_veto_summary = {
+            'run': int(run),
+            'run_start_time': run_start_time_str,
+            'average_efficiency': veto_summary.get('average_efficiency', np.nan),
+            'average_efficiency_error': veto_summary.get('average_efficiency_error', np.nan),
+            'valid_bin_count': veto_summary.get('valid_bin_count', 0),
+            'total_trig2': veto_summary.get('total_trig2', 0),
+            'total_trig2_or_34': veto_summary.get('total_trig2_or_34', 0),
+        }
+        with open(run_dir / "run_veto_summary.json", "w") as f:
+            json.dump(run_veto_summary, f, indent=4)
         
         # Extract SiPM events (triggerBits >= 32)
         sipm_events_df = df_all[df_all['triggerBits'] >= 32]
+
+        sipm_pulseh_fit_config = self._get_default_sipm_pulseh_fit_config()
+        sipm_fit_results = {}
+        if sipm_pulseh_fit_config.get('enabled', True):
+            if 'pulseH_array' in sipm_events_df.columns and not sipm_events_df.empty:
+                sipm_fit_results = self._fit_and_plot_sipm_pulseh(
+                    sipm_events_df,
+                    sipm_fit_dir,
+                    f"Run{run}",
+                    M1_or_M2,
+                    sipm_pulseh_fit_config
+                )
+            else:
+                print(f"No SiPM pulseH data available for run {run}; skipping SiPM pulseH fit.")
         
         # Initialize thin veto and BRN data
         tv_hist_counts = {}
@@ -853,13 +925,288 @@ class RunProcessor:
                    ll_hist_counts, ll_bin_edges,
                    sipm_events_df, pe_trig2, pe_trig2_or_34,
                    tv_hist_counts, tv_bin_edges,
-                   brn_data)
+                   brn_data,
+                   sipm_fit_results,
+                   run_veto_summary)
         else:
             return (None, None, None,
                    ll_hist_counts, ll_bin_edges,
                    sipm_events_df, pd.Series(dtype=float), pd.Series(dtype=float),
                    tv_hist_counts, tv_bin_edges,
-                   brn_data)
+                   brn_data,
+                   sipm_fit_results,
+                   run_veto_summary)
+
+    def _get_default_sipm_pulseh_fit_config(self):
+        cfg = getattr(config, 'SIPM_PULSEH_FIT_CONFIG', {}) or {}
+        default_hist_max = cfg.get('hist_range', (0, 800))[1] if isinstance(cfg.get('hist_range', (0, 800)), (tuple, list)) else 800
+        return {
+            'enabled': cfg.get('enabled', True),
+            'bins': int(cfg.get('bins', 200)),
+            'hist_range': tuple(cfg.get('hist_range', (0, 800))),
+            'threshold': float(cfg.get('threshold', 25.0)),
+            'fit_ranges_by_panel': cfg.get('fit_ranges_by_panel', {
+                'top': (120, default_hist_max),
+                'wide': (160, default_hist_max),
+                'thin': (90, default_hist_max),
+            }),
+            'mpv_bounds_by_panel': cfg.get('mpv_bounds_by_panel', {
+                'top': (120, 300),
+                'wide': (160, 400),
+                'thin': (90, 300),
+            })
+        }
+
+    @staticmethod
+    def _landau_plus_exp(x, A, mpv, sigma, tau, B, x0, C):
+        return A * landau_dist.pdf(x, loc=mpv, scale=sigma) + B * np.exp(-(x - x0) / tau) + C
+
+    @staticmethod
+    def _detection_probability_from_fit(mpv, sigma, threshold):
+        denom = 1.0 - landau_dist.cdf(0, loc=mpv, scale=sigma)
+        if denom <= 0:
+            return np.nan
+        return float((1.0 - landau_dist.cdf(threshold, loc=mpv, scale=sigma)) / denom)
+
+    @staticmethod
+    def _extract_channel_data(df_muon, j):
+        arr = np.array(df_muon['pulseH_array'].to_list())
+        return arr[:, j].astype(float)
+
+    def _fit_one_sipm_channel_hist(self, data, bins, hist_range, fit_range, mpv_bounds):
+        counts, edges = np.histogram(data, bins=bins, range=hist_range)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        widths = edges[1:] - edges[:-1]
+
+        xfit_min, xfit_max = fit_range
+        mask = (centers >= xfit_min) & (centers <= xfit_max)
+        x = centers[mask]
+        y = counts[mask]
+
+        good = y > 0
+        x = x[good]
+        y = y[good]
+        if len(x) < 8:
+            raise RuntimeError("Too few non-zero bins in fit window")
+
+        C0 = 0.0
+        A0 = float(max(1.0, (np.max(y) - C0) * (xfit_max - xfit_min)))
+        mpv0 = float(x[np.argmax(y)])
+        sigma0 = float(max(1e-3, 0.08 * (xfit_max - xfit_min)))
+        tau0 = float(max(1.0, 0.5 * (xfit_max - xfit_min)))
+        B0 = float(max(1.0, 0.1 * A0 / max(tau0, 1e-3)))
+        x00 = float(mpv0)
+
+        p0 = [A0, mpv0, sigma0, tau0, B0, x00, C0]
+        bounds = (
+            [0.0, mpv_bounds[0], 1e-6, 1e-6, 0.0, hist_range[0], 0.0],
+            [np.inf, mpv_bounds[1], np.inf, np.inf, np.inf, hist_range[1], np.inf]
+        )
+
+        sigma_y = np.sqrt(y)
+        popt, pcov = curve_fit(
+            self._landau_plus_exp, x, y,
+            p0=p0, bounds=bounds,
+            sigma=sigma_y, absolute_sigma=False,
+            maxfev=50000
+        )
+        perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.full(len(popt), np.nan)
+
+        A, mpv, sigma, tau, B, x0, C = popt
+        return {
+            'counts': counts,
+            'edges': edges,
+            'centers': centers,
+            'widths': widths,
+            'popt': popt,
+            'perr': perr,
+            'A': float(A),
+            'mpv': float(mpv),
+            'sigma': float(sigma),
+            'tau': float(tau),
+            'B': float(B),
+            'x0': float(x0),
+            'C': float(C),
+        }
+
+    def _fit_and_plot_sipm_pulseh(self, sipm_events_df, output_dir, file_label, M1_or_M2, fit_config):
+        self.file_handler.ensure_dir(output_dir)
+
+        bins = fit_config['bins']
+        hist_range = tuple(fit_config['hist_range'])
+        threshold = float(fit_config['threshold'])
+        fit_ranges_by_panel = fit_config['fit_ranges_by_panel']
+        mpv_bounds_by_panel = fit_config['mpv_bounds_by_panel']
+
+        sipm_channels = list(config.SIPM_CHANNELS)
+        fig, axs = plt.subplots(2, 5, figsize=(16, 6))
+        fig.suptitle(
+            f"{file_label} {M1_or_M2} SiPM pulseH: Landau+Exp fits, bins={bins}, threshold={threshold}",
+            fontsize=14
+        )
+
+        fit_results_data = {}
+        records = []
+        shared_handles = None
+        shared_labels = None
+
+        for idx, j in enumerate(sipm_channels):
+            ch = j - 11
+            panel_type = PANEL_GROUP.get(ch, 'top')
+            fit_range = tuple(fit_ranges_by_panel.get(panel_type, hist_range))
+            mpv_bounds = tuple(mpv_bounds_by_panel.get(panel_type, fit_range))
+
+            r, c = divmod(idx, 5)
+            ax = axs[r, c]
+
+            try:
+                data = self._extract_channel_data(sipm_events_df, j)
+                fit_out = self._fit_one_sipm_channel_hist(data, bins, hist_range, fit_range, mpv_bounds)
+                p_det = self._detection_probability_from_fit(fit_out['mpv'], fit_out['sigma'], threshold)
+
+                hist_line = ax.step(fit_out['edges'][:-1], fit_out['counts'], where='post', linewidth=1, label='Hist')
+                xx = np.linspace(fit_range[0], fit_range[1], 500)
+                fit_line, = ax.plot(
+                    xx,
+                    self._landau_plus_exp(
+                        xx, fit_out['A'], fit_out['mpv'], fit_out['sigma'],
+                        fit_out['tau'], fit_out['B'], fit_out['x0'], fit_out['C']
+                    ),
+                    linewidth=1.5,
+                    label='Fit'
+                )
+                thr_line = ax.axvline(threshold, linestyle='--', linewidth=1, label=f'Thr={threshold:g}')
+                fit_span = ax.axvspan(fit_range[0], fit_range[1], color='orange', alpha=0.1, label='Fit Range')
+
+                if shared_handles is None:
+                    shared_handles = [hist_line[0], fit_line, thr_line, fit_span]
+                    shared_labels = [h.get_label() for h in shared_handles]
+
+                ax.set_title(
+                    f"SiPM {ch} \n"
+                    f"MPV={fit_out['mpv']:.2f}, σ={fit_out['sigma']:.2f}\n"
+                    f"P>{threshold}={p_det:.3f}"
+                )
+                ax.set_xlim(hist_range)
+                ax.set_ylim(8, None)
+                ax.set_yscale('log')
+                bin_width = float(np.median(fit_out['widths'])) if fit_out['widths'].size > 0 else 0.0
+                ax.set_xlabel('Pulse Height (ADC)')
+                ax.set_ylabel(f'Counts/{bin_width:.1f} ADC')
+                ax.grid(True, which='both', linestyle='--', alpha=0.4)
+
+                ax.set_xticks(np.linspace(hist_range[0], hist_range[1], 5))
+                ax.set_xticks(np.linspace(hist_range[0], hist_range[1], 21), minor=True)
+                ax.set_yticks([1, 10, 100, 1e3, 1e4, 1e5], minor=False)
+
+                fit_results_data[ch] = {
+                    'channel': ch,
+                    'panel': panel_type,
+                    'counts': fit_out['counts'],
+                    'edges': fit_out['edges'],
+                    'centers': fit_out['centers'],
+                    'widths': fit_out['widths'],
+                    'fit_range': fit_range,
+                    'mpv_bounds': mpv_bounds,
+                    'popt': fit_out['popt'],
+                    'perr': fit_out['perr'],
+                    'A': fit_out['A'],
+                    'mpv': fit_out['mpv'],
+                    'sigma': fit_out['sigma'],
+                    'tau': fit_out['tau'],
+                    'B': fit_out['B'],
+                    'x0': fit_out['x0'],
+                    'C': fit_out['C'],
+                    'threshold': threshold,
+                    'p_detect': p_det,
+                    'landau_backend': 'landau' if HAVE_TRUE_LANDAU else 'moyal'
+                }
+                records.append({
+                    'channel': ch,
+                    'panel': panel_type,
+                    'A': fit_out['A'],
+                    'mpv': fit_out['mpv'],
+                    'sigma': fit_out['sigma'],
+                    'tau': fit_out['tau'],
+                    'B': fit_out['B'],
+                    'x0': fit_out['x0'],
+                    'C': fit_out['C'],
+                    'threshold': threshold,
+                    'p_detect': p_det,
+                })
+            except Exception as e:
+                ax.set_title(f"SiPM {ch} FAILED")
+                ax.text(0.05, 0.5, str(e), transform=ax.transAxes, fontsize=8)
+                ax.set_xlim(hist_range)
+                fail_bin_width = float((hist_range[1] - hist_range[0]) / bins) if bins > 0 else 0.0
+                ax.set_xlabel('Pulse Height (ADC)')
+                ax.set_ylabel(f'Counts/{fail_bin_width:.1f} ADC')
+                ax.grid(True, linestyle='--', alpha=0.4)
+
+                fit_results_data[ch] = {
+                    'channel': ch,
+                    'panel': panel_type,
+                    'counts': np.zeros(bins),
+                    'edges': np.linspace(hist_range[0], hist_range[1], bins + 1),
+                    'fit_range': fit_range,
+                    'mpv_bounds': mpv_bounds,
+                    'popt': None,
+                    'perr': None,
+                    'threshold': threshold,
+                    'p_detect': np.nan,
+                    'fit_error': str(e),
+                    'landau_backend': 'landau' if HAVE_TRUE_LANDAU else 'moyal'
+                }
+                records.append({
+                    'channel': ch,
+                    'panel': panel_type,
+                    'A': np.nan,
+                    'mpv': np.nan,
+                    'sigma': np.nan,
+                    'tau': np.nan,
+                    'B': np.nan,
+                    'x0': np.nan,
+                    'C': np.nan,
+                    'threshold': threshold,
+                    'p_detect': np.nan,
+                    'fit_error': str(e),
+                })
+
+        if shared_handles is not None:
+            fig.legend(
+                shared_handles,
+                shared_labels,
+                loc='upper right',
+                bbox_to_anchor=(0.98, 0.98),
+                ncol=4,
+                fontsize=9,
+                frameon=False,
+                borderaxespad=0.4,
+                columnspacing=0.8,
+                handletextpad=0.4,
+            )
+
+        plt.tight_layout(rect=(0.0, 0.0, 1.0, 0.92))
+
+        filename_label = file_label.replace(" ", "_").replace("-", "_").replace(":", "")
+        base_filename = f'{filename_label}_{M1_or_M2}_sipm_pulseh_fits'
+        img_save_path = output_dir / f'{base_filename}.png'
+        pkl_save_path = output_dir / f'{base_filename}.pkl'
+        summary_pkl_path = output_dir / f'{base_filename}_summary.pkl'
+        summary_csv_path = output_dir / f'{base_filename}_summary.csv'
+
+        plt.savefig(img_save_path)
+        self.file_handler.save_pickle(fit_results_data, pkl_save_path)
+        summary_df = pd.DataFrame(records).sort_values('channel')
+        summary_df.to_pickle(summary_pkl_path)
+        summary_df.to_csv(summary_csv_path, index=False)
+        plt.close(fig)
+
+        print(f"SiPM pulseH fits saved to {img_save_path}")
+        print(f"SiPM pulseH fit data saved to {pkl_save_path}")
+        print(f"SiPM pulseH fit summary saved to {summary_pkl_path}")
+
+        return fit_results_data
 
     def _process_low_light_events(self, ll_events, ll_dir, run, M1_or_M2, low_light_fit_range):
         """Process low-light events and perform fitting."""
@@ -944,7 +1291,7 @@ class RunProcessor:
         # Plot veto efficiency
         veto_img_path = hist_dir / f"{run}_{M1_or_M2}_veto_efficiency.png"
         veto_pkl_path = hist_dir / f"{run}_{M1_or_M2}_veto_efficiency.pkl"
-        self.plotter.plot_veto_efficiency(
+        veto_summary = self.plotter.plot_veto_efficiency(
             pe_trig2.to_numpy(), pe_trig2_or_34.to_numpy(),
             veto_bins, vetorange, pe_cut, veto_img_path, veto_pkl_path,
             f"Veto Efficiency Run {run}", M1_or_M2
@@ -955,7 +1302,7 @@ class RunProcessor:
         cut_results = self._save_cut_histograms(events, delta_t_cut, pe_cut, bins, cut_dir,
                                                f"Run {run}", time_std_cut, M1_or_M2, logscale)
         
-        return cut_results, pe_trig2, pe_trig2_or_34
+        return cut_results, pe_trig2, pe_trig2_or_34, veto_summary
 
     def _fit_and_plot_low_light(self, area_data, output_dir, file_label, M1_or_M2, hist_range, hist_bins=200):
         """Plots and fits sum_area for channels 0-11 for low-light events."""
@@ -1173,7 +1520,9 @@ def main():
                      ll_hists, ll_edges,
                      sipm_df, pe_2, pe_2_or_34,
                      tv_hists, tv_edges,
-                     brn_data) = result
+                     brn_data,
+                     sipm_fit_data,
+                     run_veto_summary) = result
                 
                 if dt_vals is not None: 
                     aggregated['delta_t'].append(dt_vals)

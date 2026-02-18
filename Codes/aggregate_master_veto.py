@@ -11,8 +11,10 @@ import numpy as np
 import pandas as pd
 import pickle
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from scipy.optimize import curve_fit
 import json
+from datetime import datetime
 
 # Import configuration
 import config
@@ -619,6 +621,9 @@ class MasterAggregator:
         self.total_timelength_s = 0.0
         self.total_timelength_min = 0.0
 
+        # Run-level veto summary data
+        self.run_veto_summaries = []
+
     def _load_all_subjob_data(self):
         """Loops over all sub-job directories and populates the master containers."""
         for sub_dir in self.subjob_dirs:
@@ -627,6 +632,7 @@ class MasterAggregator:
             self._load_main_arrays(sub_dir)
             self._load_sipm_data(sub_dir)
             self._load_veto_data(sub_dir)
+            self._load_run_level_veto_data(sub_dir)
             self._load_low_light_data(sub_dir)
             self._load_thin_veto_data(sub_dir)
             self._load_brn_data(sub_dir)
@@ -688,6 +694,70 @@ class MasterAggregator:
 
             self.master_pe_comp_counts_2_or_34 += job_counts_comp_2_34
             self.master_veto_counts_2_or_34 += job_counts_veto_2_34
+
+    def _parse_run_start_datetime(self, run_dir_name, run_start_time_str):
+        """Parse run start datetime from summary string or run directory name."""
+        candidate_strings = []
+        if isinstance(run_start_time_str, str) and run_start_time_str != 'no_ts':
+            candidate_strings.append(run_start_time_str)
+
+        if '_' in run_dir_name:
+            suffix = run_dir_name.split('_', 1)[1]
+            if suffix and suffix != 'no_ts':
+                candidate_strings.append(suffix)
+
+        for candidate in candidate_strings:
+            try:
+                return datetime.strptime(candidate, '%Y%m%d-%H')
+            except ValueError:
+                continue
+        return None
+
+    def _load_run_level_veto_data(self, sub_dir):
+        """Load per-run average veto efficiency summaries from run folders."""
+        for run_dir in sorted(sub_dir.glob('run*')):
+            if not run_dir.is_dir():
+                continue
+
+            summary_file = run_dir / 'run_veto_summary.json'
+            if not summary_file.exists():
+                continue
+
+            try:
+                with open(summary_file, 'r') as f:
+                    info = json.load(f)
+
+                run_number = info.get('run')
+                avg_eff = info.get('average_efficiency', np.nan)
+                avg_err = info.get('average_efficiency_error', np.nan)
+                run_start_str = info.get('run_start_time', 'no_ts')
+                run_dt = self._parse_run_start_datetime(run_dir.name, run_start_str)
+
+                try:
+                    avg_eff_val = float(avg_eff)
+                except (TypeError, ValueError):
+                    avg_eff_val = np.nan
+                try:
+                    avg_err_val = float(avg_err)
+                except (TypeError, ValueError):
+                    avg_err_val = np.nan
+
+                if run_number is None:
+                    continue
+
+                self.run_veto_summaries.append({
+                    'run': int(run_number),
+                    'run_dir': run_dir.name,
+                    'run_start_time': run_start_str,
+                    'run_datetime': run_dt,
+                    'average_efficiency': avg_eff_val if np.isfinite(avg_eff_val) else np.nan,
+                    'average_efficiency_error': avg_err_val if np.isfinite(avg_err_val) else np.nan,
+                    'valid_bin_count': int(info.get('valid_bin_count', 0)),
+                    'total_trig2': int(info.get('total_trig2', 0)),
+                    'total_trig2_or_34': int(info.get('total_trig2_or_34', 0)),
+                })
+            except Exception as e:
+                print(f"  Warning: Could not read run-level veto summary from {summary_file}. Error: {e}")
 
     def _load_low_light_data(self, sub_dir):
         """Load and sum low-light histogram data."""
@@ -794,6 +864,7 @@ class MasterAggregator:
         """Uses the populated master containers to generate all plots."""
         self._generate_main_plots()
         self._generate_veto_plots()
+        self._generate_veto_efficiency_evolution_plot()
         self._generate_low_light_plots()
         self._generate_sipm_plots()
         self._generate_thin_veto_plots()
@@ -847,6 +918,89 @@ class MasterAggregator:
             )
         else:
             print("No Veto Efficiency data found.")
+
+    def _generate_veto_efficiency_evolution_plot(self):
+        """Generate run-by-run average veto efficiency evolution plot vs real date/time."""
+        if not self.run_veto_summaries:
+            print("No per-run veto summary data found for evolution plot.")
+            return
+
+        run_df = pd.DataFrame(self.run_veto_summaries)
+        run_df = run_df.dropna(subset=['average_efficiency'])
+        if run_df.empty:
+            print("Run-level veto summaries are present, but no valid average efficiency values were found.")
+            return
+
+        has_datetime = run_df['run_datetime'].notna().any()
+
+        if has_datetime:
+            run_df = run_df.sort_values('run_datetime')
+            x = run_df['run_datetime'].to_list()
+            x_label = 'Run Start Time'
+            use_dates = True
+        else:
+            run_df = run_df.sort_values('run')
+            x = run_df['run'].to_numpy()
+            x_label = 'Run Number (start time unavailable)'
+            use_dates = False
+
+        y = run_df['average_efficiency'].to_numpy()
+        yerr = run_df['average_efficiency_error'].to_numpy()
+        finite_err = np.where(np.isfinite(yerr), yerr, 0.0)
+
+        plt.figure(figsize=(12, 6))
+        plt.errorbar(
+            x, y, yerr=finite_err,
+            fmt='o-', markersize=4, linewidth=1,
+            capsize=2, color='navy', ecolor='steelblue',
+            label='Run average veto efficiency'
+        )
+        plt.ylabel('Average Veto Efficiency')
+        plt.xlabel(x_label)
+        plt.title(f'Veto Efficiency Evolution by Run ({self.agg_label}, {self.m1_or_m2})')
+        plt.grid(True, which='major', linestyle='-', linewidth=0.7)
+        plt.grid(True, which='minor', linestyle=':', linewidth=0.5)
+        plt.minorticks_on()
+
+        if use_dates:
+            ax = plt.gca()
+            locator = mdates.AutoDateLocator(maxticks=6)
+            formatter = mdates.DateFormatter('%Y-%m-%d\n%H:00')
+            ax.xaxis.set_major_locator(locator)
+            ax.xaxis.set_major_formatter(formatter)
+            plt.gcf().autofmt_xdate(rotation=0, ha='center')
+        else:
+            max_ticks = min(6, len(run_df))
+            if max_ticks > 0:
+                idx = np.unique(np.linspace(0, len(run_df) - 1, max_ticks, dtype=int))
+                tick_x = run_df['run'].to_numpy()[idx]
+                plt.xticks(tick_x)
+
+        plt.legend()
+        plt.tight_layout()
+
+        img_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_veto_efficiency_evolution.png"
+        pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_veto_efficiency_evolution.pkl"
+        csv_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_veto_efficiency_evolution.csv"
+
+        plt.savefig(img_path)
+        plt.close()
+
+        out_df = run_df[['run', 'run_dir', 'run_start_time', 'average_efficiency', 'average_efficiency_error',
+                         'valid_bin_count', 'total_trig2', 'total_trig2_or_34']].copy()
+        if use_dates:
+            out_df['run_datetime'] = pd.to_datetime(run_df['run_datetime']).dt.strftime('%Y-%m-%d %H:00')
+        else:
+            out_df['run_datetime'] = pd.NA
+
+        with open(pkl_path, 'wb') as f:
+            pickle.dump({
+                'run_summaries': self.run_veto_summaries,
+                'plot_data': out_df.to_dict(orient='list')
+            }, f)
+        out_df.to_csv(csv_path, index=False)
+        print(f"Veto efficiency evolution plot saved to {img_path}")
+        print(f"Veto efficiency evolution data saved to {pkl_path}")
 
     def _generate_low_light_plots(self):
         """Generate low-light fit plots."""
