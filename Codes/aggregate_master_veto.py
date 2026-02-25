@@ -157,9 +157,18 @@ class BinnedDataPlotter:
         average_efficiency = np.mean(efficiency[veto_range_mask]) if np.any(veto_range_mask) else np.nan
 
         n = counts_2_or_34[valid_mask]
-        p = ratio[valid_mask] 
+        p = ratio
         error[valid_mask] = np.sqrt(p * (1 - p) / n)
-        err_average_efficiency = np.sqrt(np.mean(error[veto_range_mask]**2)) if np.any(veto_range_mask) else np.nan
+        # Average-efficiency uncertainty from integrated counts in veto range.
+        k_total = float(np.sum(counts_2[veto_range_mask])) if np.any(veto_range_mask) else 0.0
+        n_total = float(np.sum(counts_2_or_34[veto_range_mask])) if np.any(veto_range_mask) else 0.0
+        if n_total > 0:
+            p_total = np.clip(k_total / n_total, 0.0, 1.0)
+            average_efficiency = 1.0 - p_total
+            err_average_efficiency = np.sqrt(p_total * (1.0 - p_total) / n_total)
+        else:
+            average_efficiency = np.nan
+            err_average_efficiency = np.nan
 
         # --- Michel tail subtraction (fit exponential in specified range) ---
         def exp_model(x, a, b):
@@ -214,19 +223,34 @@ class BinnedDataPlotter:
         ratio_sub = np.divide(counts_2_sub[valid_mask_sub], counts_2_or_34_sub[valid_mask_sub])
         efficiency_sub[valid_mask_sub] = 1 - ratio_sub
 
-        # Error propagation for r=(N-S)/(D-S): include Poisson N,D and shared Michel-tail S uncertainty
-        denom_sub = counts_2_or_34_sub[valid_mask_sub]
-        var_num = counts_2[valid_mask_sub]
-        var_den = counts_2_or_34[valid_mask_sub]
-        var_tail = michel_tail_variance[valid_mask_sub]
-        d_ratio_d_num = 1.0 / np.maximum(denom_sub, 1e-12)
-        d_ratio_d_den = -ratio_sub / np.maximum(denom_sub, 1e-12)
-        d_ratio_d_tail = (counts_2[valid_mask_sub] - counts_2_or_34[valid_mask_sub]) / np.maximum(denom_sub, 1e-12) ** 2
+        # Error propagation for r=(N-S)/(D-S): Use independent variables k (numerator counts) and m (counts_2_or_34 - counts_2)
+        # Ratio R = (k - S) / (k + m - S)
+        # This handles the correlation between numerator and denominator correctly (unlike treating them as independent).
+        
+        k_raw = counts_2[valid_mask_sub]
+        N_raw = counts_2_or_34[valid_mask_sub]
+        m_raw = N_raw - k_raw  # Independent 'passed' counts
+        S_val = michel_tail_counts[valid_mask_sub]
+        
+        num_sub = counts_2_sub[valid_mask_sub]       # k - S
+        denom_sub = counts_2_or_34_sub[valid_mask_sub] # N - S
+        
+        safe_denom_sq = np.maximum(denom_sub ** 2, 1e-24)
+        
+        # Partial derivatives:
+        dR_dk = m_raw / safe_denom_sq
+        dR_dm = -num_sub / safe_denom_sq
+        dR_dS = -m_raw / safe_denom_sq
+        
+        var_k = k_raw
+        var_m = m_raw
+        var_S = michel_tail_variance[valid_mask_sub]
+        
         with np.errstate(divide='ignore', invalid='ignore'):
             var_ratio = (
-                (d_ratio_d_num ** 2) * var_num
-                + (d_ratio_d_den ** 2) * var_den
-                + (d_ratio_d_tail ** 2) * var_tail
+                (dR_dk ** 2) * var_k
+                + (dR_dm ** 2) * var_m
+                + (dR_dS ** 2) * var_S
             )
         var_ratio = np.clip(var_ratio, 0.0, None)
         error_sub[valid_mask_sub] = np.sqrt(var_ratio)
@@ -895,6 +919,10 @@ class MasterAggregator:
                 if mu1_values.size != 12:
                     mu1_values = np.full(12, np.nan)
 
+                mu1_errors = np.asarray(info.get('mu1_errors', [np.nan] * 12), dtype=float)
+                if mu1_errors.size != 12:
+                    mu1_errors = np.full(12, np.nan)
+
                 hl_peak = np.asarray(info.get('highlight_peak_pe', [np.nan] * 12), dtype=float)
                 if hl_peak.size != 12:
                     hl_peak = np.full(12, np.nan)
@@ -922,6 +950,7 @@ class MasterAggregator:
                     'total_trig2': int(info.get('total_trig2', 0)),
                     'total_trig2_or_34': int(info.get('total_trig2_or_34', 0)),
                     'mu1_values': mu1_values,
+                    'mu1_errors': mu1_errors,
                     'highlight_peak_pe': hl_peak,
                     'highlight_peak_pe_err': hl_peak_err,
                     'highlight_avg_pe': hl_avg_val if np.isfinite(hl_avg_val) else np.nan,
@@ -1064,9 +1093,12 @@ class MasterAggregator:
 
     def _prepare_evolution_x(self, run_df):
         """Prepare x-axis values for evolution plots with date-first fallback to run number."""
-        has_datetime = run_df['run_datetime'].notna().any()
-        if has_datetime:
-            run_df = run_df.sort_values('run_datetime')
+        run_df_dt = run_df.dropna(subset=['run_datetime']).copy()
+        if not run_df_dt.empty:
+            dropped = len(run_df) - len(run_df_dt)
+            if dropped > 0:
+                print(f"Warning: {dropped} runs have missing start time and are excluded from time-based evolution plots.")
+            run_df = run_df_dt.sort_values('run_datetime')
             x = run_df['run_datetime'].to_list()
             x_label = 'Run Start Time'
             use_dates = True
@@ -1219,12 +1251,15 @@ class MasterAggregator:
             return
 
         run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+        err_matrix = np.vstack(run_df['mu1_errors'].apply(lambda arr: np.asarray(arr, dtype=float)).to_numpy()) if 'mu1_errors' in run_df.columns else np.full((len(run_df), 12), np.nan)
 
         plt.figure(figsize=(13, 7))
         cmap = plt.cm.get_cmap('tab20', 12)
         for ch in range(12):
             y = run_df['mu1_values'].apply(lambda arr: float(np.asarray(arr, dtype=float)[ch])).to_numpy()
-            plt.plot(x, y, marker='o', linewidth=1.2, markersize=3.5, color=cmap(ch), label=f'PMT {ch}')
+            yerr = np.where(np.isfinite(err_matrix[:, ch]), err_matrix[:, ch], 0.0)
+            plt.errorbar(x, y, yerr=yerr, fmt='o-', markersize=3.5, linewidth=1.2, capsize=1.5,
+                         color=cmap(ch), alpha=0.9, label=f'PMT {ch}')
 
         plt.ylabel('$\\mu_1$ Area (ADC)')
         plt.xlabel(x_label)
@@ -1247,6 +1282,7 @@ class MasterAggregator:
         mu1_matrix = np.vstack(run_df['mu1_values'].apply(lambda arr: np.asarray(arr, dtype=float)).to_numpy())
         for ch in range(12):
             out_df[f'mu1_ch{ch}'] = mu1_matrix[:, ch]
+            out_df[f'mu1_err_ch{ch}'] = err_matrix[:, ch]
         if use_dates:
             out_df['run_datetime'] = pd.to_datetime(run_df['run_datetime']).dt.strftime('%Y-%m-%d %H:00')
         else:
@@ -1295,6 +1331,11 @@ class MasterAggregator:
         err_matrix = np.vstack(run_df['highlight_peak_pe_err'].apply(lambda arr: np.asarray(arr, dtype=float)).to_numpy()) if 'highlight_peak_pe_err' in run_df.columns else np.full_like(peak_matrix, np.nan)
         avg_vals = run_df['highlight_avg_pe'].to_numpy(dtype=float) if 'highlight_avg_pe' in run_df.columns else np.nanmean(peak_matrix, axis=1)
 
+        # Propagate per-channel fit uncertainties to the 12-channel average.
+        finite_err_matrix = np.where(np.isfinite(err_matrix), err_matrix, np.nan)
+        n_valid_err = np.sum(np.isfinite(finite_err_matrix), axis=1)
+        avg_err = np.sqrt(np.nansum(finite_err_matrix ** 2, axis=1)) / np.where(n_valid_err > 0, n_valid_err, np.nan)
+
         plt.figure(figsize=(13, 7))
         cmap = plt.cm.get_cmap('tab20', 12)
         for ch in range(12):
@@ -1303,7 +1344,71 @@ class MasterAggregator:
             plt.errorbar(x, y, yerr=yerr, fmt='o-', markersize=3.0, linewidth=1.0, capsize=1.5,
                          color=cmap(ch), alpha=0.9, label=f'PMT {ch}')
 
-        plt.plot(x, avg_vals, 'k--', linewidth=2.0, marker='s', markersize=4.0, label='Average (12 PMTs)')
+        avg_yerr_plot = np.where(np.isfinite(avg_err), avg_err, 0.0)
+        plt.errorbar(
+            x, avg_vals, yerr=avg_yerr_plot,
+            fmt='s--', linewidth=2.0, markersize=4.0, capsize=2.0,
+            color='k', ecolor='k', alpha=0.95, label='Average (12 PMTs)'
+        )
+
+        # Linear fit on average series: y = a*x + b.
+        def linear_model(xv, a, b):
+            return a * xv + b
+
+        fit_x_unit = 'day' if use_dates else 'run'
+        fit_x_origin = None
+        if use_dates:
+            run_dt = pd.to_datetime(run_df['run_datetime'])
+            x_fit_abs = mdates.date2num(run_dt.dt.to_pydatetime())
+            x_fit_origin = float(np.min(x_fit_abs))
+            x_fit_all = x_fit_abs - x_fit_origin  # elapsed days
+            fit_x_origin = str(run_dt.min())
+        else:
+            x_fit_all = run_df['run'].to_numpy(dtype=float)
+
+        fit_mask = np.isfinite(x_fit_all) & np.isfinite(avg_vals)
+        fit_params = None
+        fit_param_err = None
+        if np.count_nonzero(fit_mask) >= 2:
+            x_fit = np.asarray(x_fit_all[fit_mask], dtype=float)
+            y_fit = np.asarray(avg_vals[fit_mask], dtype=float)
+            sigma_fit = np.asarray(avg_err[fit_mask], dtype=float)
+            valid_sigma = np.isfinite(sigma_fit) & (sigma_fit > 0)
+            try:
+                if np.count_nonzero(valid_sigma) >= 2:
+                    popt, pcov = curve_fit(
+                        linear_model,
+                        x_fit[valid_sigma],
+                        y_fit[valid_sigma],
+                        sigma=sigma_fit[valid_sigma],
+                        absolute_sigma=True
+                    )
+                else:
+                    popt, pcov = curve_fit(linear_model, x_fit, y_fit)
+
+                perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.array([np.nan, np.nan])
+                fit_params = {'a': float(popt[0]), 'b': float(popt[1]), 'a_unit': f'P.E./{fit_x_unit}', 'b_unit': 'P.E.'}
+                fit_param_err = {'a_err': float(perr[0]), 'b_err': float(perr[1])}
+
+                x_line_num = np.linspace(np.min(x_fit), np.max(x_fit), 200)
+                y_line = linear_model(x_line_num, *popt)
+                if use_dates:
+                    x_line = mdates.num2date(x_line_num + x_fit_origin)
+                else:
+                    x_line = x_line_num
+                plt.plot(
+                    x_line,
+                    y_line,
+                    color='magenta',
+                    linewidth=2.0,
+                    linestyle='-',
+                    label=(
+                        f'Linear fit avg: a={popt[0]:.3f}±{perr[0]:.3f} P.E./{fit_x_unit}'
+                    )
+                )
+            except Exception as e:
+                print(f"Warning: Linear fit failed for highlight average evolution. Error: {e}")
+
         plt.ylabel('Highlight Peak (P.E.)')
         plt.xlabel(x_label)
         plt.title(f'Highlight Peak Evolution by Run ({self.agg_label}, {self.m1_or_m2})')
@@ -1326,13 +1431,20 @@ class MasterAggregator:
             out_df[f'peak_ch{ch}'] = peak_matrix[:, ch]
             out_df[f'peak_err_ch{ch}'] = err_matrix[:, ch]
         out_df['peak_avg_12ch'] = avg_vals
+        out_df['peak_avg_err_12ch'] = avg_err
         if use_dates:
             out_df['run_datetime'] = pd.to_datetime(run_df['run_datetime']).dt.strftime('%Y-%m-%d %H:00')
         else:
             out_df['run_datetime'] = pd.NA
 
         with open(pkl_path, 'wb') as f:
-            pickle.dump({'plot_data': out_df.to_dict(orient='list')}, f)
+            pickle.dump({
+                'plot_data': out_df.to_dict(orient='list'),
+                'fit_params': fit_params,
+                'fit_param_err': fit_param_err,
+                'fit_x_unit': fit_x_unit,
+                'fit_x_origin': fit_x_origin
+            }, f)
         out_df.to_csv(csv_path, index=False)
         print(f"Highlight peak evolution plot saved to {img_path}")
 

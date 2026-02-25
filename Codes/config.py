@@ -23,7 +23,7 @@ SIPM_CHANNELS = list(range(12, 22))    # SiPM channels: 12-21
 # --- Run & Directory Configuration ---
 DATA_DIR_M1 = "/raid1/genli/Data_D2O/M1_data"
 DATA_DIR_M2 = "/raid1/genli/Data_D2O/M2_data"
-suffix_M1 = "_processed_v5.root"
+suffix_M1 = "_processed_v4.root"
 suffix_M2 = "_processed_H2O_v5.root"
 # --- Cut & Binning Configuration ---
 TIME_INTERVAL_CUT_NS = 2000  # Pile-up cut in ns

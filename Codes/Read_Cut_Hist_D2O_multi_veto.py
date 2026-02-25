@@ -582,7 +582,17 @@ class Plotter:
         n = counts_2_or_34[valid_mask]
         p = ratio
         error[valid_mask] = np.sqrt(p * (1 - p) / n)
-        average_efficiency_error = np.sqrt(np.mean(error[avg_mask]**2)) if np.any(avg_mask) else np.nan
+        # Run-average uncertainty should come from integrated counts in the veto range,
+        # not RMS of per-bin errors.
+        k_total = float(np.sum(counts_2[avg_mask])) if np.any(avg_mask) else 0.0
+        n_total = float(np.sum(counts_2_or_34[avg_mask])) if np.any(avg_mask) else 0.0
+        if n_total > 0:
+            p_total = np.clip(k_total / n_total, 0.0, 1.0)
+            average_efficiency = 1.0 - p_total
+            average_efficiency_error = np.sqrt(p_total * (1.0 - p_total) / n_total)
+        else:
+            average_efficiency = np.nan
+            average_efficiency_error = np.nan
 
         # Plotting
         plt.figure(figsize=(10, 6))
@@ -807,7 +817,7 @@ class RunProcessor:
         
         # Process low-light events and calculate photoelectrons
         ll_events = df_all[df_all['triggerBits'] == 16]
-        mu1_values_run, ll_hist_counts, ll_bin_edges = self._process_low_light_events(
+        mu1_values_run, mu1_errors_run, ll_hist_counts, ll_bin_edges = self._process_low_light_events(
             ll_events, ll_dir, run, M1_or_M2, low_light_fit_range
         )
 
@@ -819,6 +829,7 @@ class RunProcessor:
         hl_hist_counts, hl_bin_edges, hl_summary_df = self._fit_and_plot_highlight_pe(
             highlight_events,
             mu1_values_run,
+            mu1_errors_run,
             highlight_dir,
             f'Run{run}',
             M1_or_M2,
@@ -865,6 +876,7 @@ class RunProcessor:
             'total_trig2': veto_summary.get('total_trig2', 0),
             'total_trig2_or_34': veto_summary.get('total_trig2_or_34', 0),
             'mu1_values': [float(x) if np.isfinite(x) else np.nan for x in np.asarray(mu1_values_run, dtype=float)],
+            'mu1_errors': [float(x) if np.isfinite(x) else np.nan for x in np.asarray(mu1_errors_run, dtype=float)],
         }
 
         hl_peak = np.full(12, np.nan)
@@ -1262,7 +1274,7 @@ class RunProcessor:
 
         return fit_results_data
 
-    def _fit_and_plot_highlight_pe(self, highlight_events_df, mu1_values_run, output_dir, file_label, M1_or_M2, fit_config):
+    def _fit_and_plot_highlight_pe(self, highlight_events_df, mu1_values_run, mu1_errors_run, output_dir, file_label, M1_or_M2, fit_config):
         self.file_handler.ensure_dir(output_dir)
 
         bins = int(fit_config['bins'])
@@ -1289,6 +1301,7 @@ class RunProcessor:
         for i in range(12):
             ax = axes[i]
             mu1 = mu1_values_run[i] if i < len(mu1_values_run) else np.nan
+            mu1_err = mu1_errors_run[i] if i < len(mu1_errors_run) else np.nan
 
             if area_data.size == 0 or (not np.isfinite(mu1)) or mu1 <= 0:
                 counts = np.zeros(bins, dtype=float)
@@ -1300,6 +1313,8 @@ class RunProcessor:
                     'perr': None,
                     'peak_pe': np.nan,
                     'peak_pe_err': np.nan,
+                    'peak_pe_err_fit': np.nan,
+                    'peak_pe_err_mu1': np.nan,
                     'n_events': 0,
                 }
                 reason = 'No events' if area_data.size == 0 else 'Invalid $\\mu_1$'
@@ -1321,6 +1336,8 @@ class RunProcessor:
 
             peak_pe = np.nan
             peak_pe_err = np.nan
+            peak_pe_err_fit = np.nan
+            peak_pe_err_mu1 = np.nan
             popt_out = None
             perr_out = None
 
@@ -1386,7 +1403,7 @@ class RunProcessor:
                         perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.full(len(popt), np.nan)
 
                         peak_pe = float(popt[1])
-                        peak_pe_err = float(perr[1]) if len(perr) > 1 and np.isfinite(perr[1]) else np.nan
+                        peak_pe_err_fit = float(perr[1]) if len(perr) > 1 and np.isfinite(perr[1]) else np.nan
                         popt_out = popt
                         perr_out = perr
 
@@ -1395,10 +1412,21 @@ class RunProcessor:
                                 label=f'Fit peak={peak_pe:.2f} p.e.')
                     except Exception:
                         peak_pe = peak_guess
-                        peak_pe_err = np.nan
+                        peak_pe_err_fit = np.nan
                 else:
                     peak_pe = peak_guess
-                    peak_pe_err = np.nan
+                    peak_pe_err_fit = np.nan
+
+            if np.isfinite(peak_pe) and np.isfinite(mu1_err) and np.isfinite(mu1) and mu1 > 0:
+                peak_pe_err_mu1 = abs(peak_pe) * (mu1_err / mu1)
+            if np.isfinite(peak_pe_err_fit) and np.isfinite(peak_pe_err_mu1):
+                peak_pe_err = float(np.sqrt(peak_pe_err_fit**2 + peak_pe_err_mu1**2))
+            elif np.isfinite(peak_pe_err_fit):
+                peak_pe_err = float(peak_pe_err_fit)
+            elif np.isfinite(peak_pe_err_mu1):
+                peak_pe_err = float(peak_pe_err_mu1)
+            else:
+                peak_pe_err = np.nan
 
             fit_results_data[i] = {
                 'counts': counts,
@@ -1407,9 +1435,18 @@ class RunProcessor:
                 'perr': perr_out,
                 'peak_pe': peak_pe,
                 'peak_pe_err': peak_pe_err,
+                'peak_pe_err_fit': peak_pe_err_fit,
+                'peak_pe_err_mu1': peak_pe_err_mu1,
                 'n_events': int(ch_pe.size),
             }
-            records.append({'channel': i, 'peak_pe': peak_pe, 'peak_pe_err': peak_pe_err, 'n_events': int(ch_pe.size)})
+            records.append({
+                'channel': i,
+                'peak_pe': peak_pe,
+                'peak_pe_err': peak_pe_err,
+                'peak_pe_err_fit': peak_pe_err_fit,
+                'peak_pe_err_mu1': peak_pe_err_mu1,
+                'n_events': int(ch_pe.size)
+            })
 
             if np.isfinite(peak_pe):
                 ax.text(0.98, 0.95, f'Peak={peak_pe:.2f} p.e.', transform=ax.transAxes,
@@ -1449,7 +1486,7 @@ class RunProcessor:
         low_light_area_data = np.array(ll_events['area_array'].to_list())[:, config.PMT_CHANNELS] if not ll_events.empty else np.array([])
         
         if low_light_area_data.size > 0:
-            mu1_values, fit_results_data = self._fit_and_plot_low_light(
+            mu1_values, mu1_errors, fit_results_data = self._fit_and_plot_low_light(
                 low_light_area_data, ll_dir, f'Run{run}', M1_or_M2, low_light_fit_range
             )
             
@@ -1467,13 +1504,13 @@ class RunProcessor:
                         ll_bin_edges = np.linspace(*low_light_fit_range, 201)
                     ll_hist_counts[ch] = np.zeros(len(ll_bin_edges) - 1)
             
-            return mu1_values, ll_hist_counts, ll_bin_edges
+            return mu1_values, mu1_errors, ll_hist_counts, ll_bin_edges
         else:
             print(f"No low-light events for run {run}. P.E. and multiplicity calculations will fail.")
             # Return empty histogram data
             ll_bin_edges = np.linspace(*low_light_fit_range, 201)
             ll_hist_counts = {ch: np.zeros(len(ll_bin_edges) - 1) for ch in range(12)}
-            return np.full(12, np.nan), ll_hist_counts, ll_bin_edges
+            return np.full(12, np.nan), np.full(12, np.nan), ll_hist_counts, ll_bin_edges
 
     def _calculate_derived_quantities(self, df_all, mu1_values_run, multiplicity_spe):
         """Calculate derived quantities like multiplicity, time_std, and total_pe."""
@@ -1544,7 +1581,7 @@ class RunProcessor:
         """Plots and fits sum_area for channels 0-11 for low-light events."""
         if area_data.size == 0:
             print(f"No low-light data to process for {file_label}.")
-            return np.full(12, np.nan)
+            return np.full(12, np.nan), np.full(12, np.nan), {}
 
         def constrained_gaussians(x, a0, mu0, sig0, a1, mu1, sig1, a2, a3):
             sig2_sq = 2 * sig1**2 - sig0**2
@@ -1562,6 +1599,7 @@ class RunProcessor:
         axes = axes.flatten()
         
         mu1_values = np.full(12, np.nan)
+        mu1_errors = np.full(12, np.nan)
         fit_results_data = {}
 
         for i in range(12):
@@ -1577,6 +1615,8 @@ class RunProcessor:
                 popt, pcov = curve_fit(constrained_gaussians, centers[mask], counts[mask], p0=p0, maxfev=10000)
                 perr = np.sqrt(np.diag(pcov))
                 mu1_values[i] = popt[4]
+                if len(perr) > 4 and np.isfinite(perr[4]):
+                    mu1_errors[i] = perr[4]
                 fit_x = np.linspace(hist_range[0], hist_range[1], 500)
                 ax.plot(fit_x, constrained_gaussians(fit_x, *popt), 'r-', label='Fit')
                 param_text = (f'$\\mu_1$: {popt[4]:.1f} ± {perr[4]:.1f}\n'
@@ -1609,7 +1649,7 @@ class RunProcessor:
         print(f"Low-light fit data saved to {pkl_save_path}")
         plt.close()
         
-        return mu1_values, fit_results_data
+        return mu1_values, mu1_errors, fit_results_data
 
     def _save_cut_histograms(self, events, delta_t_range, pe_range, bins,
                            save_dir, run_label, time_std_cut, M1_or_M2, logscale=True):
