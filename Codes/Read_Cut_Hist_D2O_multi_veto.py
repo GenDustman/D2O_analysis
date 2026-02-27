@@ -49,6 +49,9 @@ except ImportError:
     class DefaultConfig:
         DATA_DIR_M1 = "/path/to/M1/data"
         DATA_DIR_M2 = "/path/to/M2/data"
+        suffix_M1 = "auto"
+        SUFFIX_M1_CANDIDATES = ["_processed_v5.root", "_processed_v4.root"]
+        suffix_M2 = "_processed_H2O_v5.root"
         TIME_TICK_NS = 16
         PMT_CHANNELS  = list(range(0, 12))
         SIPM_CHANNELS = list(range(12, 22))
@@ -696,23 +699,48 @@ class RunProcessor:
         self.plotter = Plotter()
         self.file_handler = FileHandler()
 
+    def _resolve_input_file(self, run, data_dir, M1_or_M2):
+        """Resolve input ROOT file path, including optional M1 auto-suffix fallback."""
+        if M1_or_M2 == 'M1':
+            raw_suffix = getattr(config, 'suffix_M1', '_processed_v5.root')
+            if isinstance(raw_suffix, str) and raw_suffix.lower() == 'auto':
+                suffix_candidates = list(getattr(
+                    config,
+                    'SUFFIX_M1_CANDIDATES',
+                    ['_processed_v5.root', '_processed_v4.root']
+                ))
+            else:
+                suffix_candidates = [raw_suffix]
+
+            seen = set()
+            for suffix in suffix_candidates:
+                if suffix in seen:
+                    continue
+                seen.add(suffix)
+                infile = data_dir / f"run{run}{suffix}"
+                if infile.exists():
+                    return infile, suffix
+
+            return None, suffix_candidates
+
+        if M1_or_M2 == 'M2':
+            suffix = getattr(config, 'suffix_M2', '_processed_H2O_v5.root')
+            infile = data_dir / f"run{run}{suffix}"
+            return (infile, suffix) if infile.exists() else (None, [suffix])
+
+        raise ValueError("M1_or_M2 must be 'M1' or 'M2'")
+
     def process_run(self, run, data_dir, output_dir, delta_t_cut, pe_cut, bins, veto_bins, vetorange,
                     multiplicity_spe, multiplicity_cut, time_std_cut, logscale,
                     low_light_fit_range, simp_hist_config, M1_or_M2):
         """Process a single run: read data, perform calculations, and apply cuts."""
         print(f"--- Processing run {run} ---")
         
-        # Determine input file path
-        if M1_or_M2 == 'M1':
-            infile = data_dir / (f"run{run}" + config.suffix_M1)
-        elif M1_or_M2 == 'M2':
-            infile = data_dir / (f"run{run}" + config.suffix_M2)
-        else:
-            raise ValueError("M1_or_M2 must be 'M1' or 'M2'")
-            
-        if not infile.exists():
-            print(f"Missing file: {infile}")
+        infile, used_suffix = self._resolve_input_file(run, data_dir, M1_or_M2)
+        if infile is None:
+            print(f"Missing file for run {run}. Tried suffix(es): {used_suffix}")
             return None
+        print(f"Using input file: {infile.name} (suffix={used_suffix})")
 
         # Get run start time
         run_start_time_str = self._get_run_start_time(infile, run)

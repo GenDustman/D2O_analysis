@@ -587,7 +587,7 @@ class BinnedDataPlotter:
             ax.set_ylabel('Events')
             ax.set_xlim(hist_range)
             ax.grid(True, which='both', linestyle=':')
-            ax.legend(loc='best', fontsize='small')
+            ax.legend(loc='best', fontsize='medium')
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.96])
         self.file_handler.ensure_dir(output_dir)
@@ -1351,9 +1351,36 @@ class MasterAggregator:
             color='k', ecolor='k', alpha=0.95, label='Average (12 PMTs)'
         )
 
-        # Linear fit on average series: y = a*x + b.
+        # Fit on average series (configurable model).
         def linear_model(xv, a, b):
             return a * xv + b
+
+        def exp_model(xv, a, t0, tau, b):
+            tau_safe = np.where(np.abs(tau) < 1e-12, 1e-12, tau)
+            expo = np.clip(-1 * (xv + t0) / tau_safe, -700, 700)
+            return a * np.exp(expo) + b
+
+        def compute_fit_quality(y_obs, y_pred, y_sigma, n_params):
+            if y_sigma is not None:
+                sigma_mask = np.isfinite(y_sigma) & (y_sigma > 0)
+                if np.count_nonzero(sigma_mask) >= max(2, n_params):
+                    resid = (y_obs[sigma_mask] - y_pred[sigma_mask]) / y_sigma[sigma_mask]
+                    chi2 = float(np.sum(resid ** 2))
+                    ndof = int(np.count_nonzero(sigma_mask) - n_params)
+                    red = chi2 / ndof if ndof > 0 else np.nan
+                    return chi2, ndof, red
+
+            resid = y_obs - y_pred
+            chi2 = float(np.sum(resid ** 2))
+            ndof = int(len(y_obs) - n_params)
+            red = chi2 / ndof if ndof > 0 else np.nan
+            return chi2, ndof, red
+
+        fit_cfg = getattr(config, 'HIGHLIGHT_EVOLUTION_FIT_CONFIG', {}) or {}
+        fit_model = str(fit_cfg.get('model', 'linear')).strip().lower()
+        if fit_model not in ('linear', 'exp'):
+            print(f"Warning: unsupported HIGHLIGHT_EVOLUTION_FIT_CONFIG['model']={fit_model}. Falling back to 'linear'.")
+            fit_model = 'linear'
 
         fit_x_unit = 'day' if use_dates else 'run'
         fit_x_origin = None
@@ -1375,39 +1402,142 @@ class MasterAggregator:
             sigma_fit = np.asarray(avg_err[fit_mask], dtype=float)
             valid_sigma = np.isfinite(sigma_fit) & (sigma_fit > 0)
             try:
-                if np.count_nonzero(valid_sigma) >= 2:
-                    popt, pcov = curve_fit(
-                        linear_model,
-                        x_fit[valid_sigma],
-                        y_fit[valid_sigma],
-                        sigma=sigma_fit[valid_sigma],
-                        absolute_sigma=True
+                if fit_model == 'linear':
+                    n_params = 2
+                    if np.count_nonzero(valid_sigma) >= 2:
+                        x_in = x_fit[valid_sigma]
+                        y_in = y_fit[valid_sigma]
+                        sigma_in = sigma_fit[valid_sigma]
+                        popt, pcov = curve_fit(
+                            linear_model,
+                            x_in,
+                            y_in,
+                            sigma=sigma_in,
+                            absolute_sigma=True
+                        )
+                    else:
+                        x_in = x_fit
+                        y_in = y_fit
+                        sigma_in = None
+                        popt, pcov = curve_fit(linear_model, x_in, y_in)
+
+                    perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.array([np.nan, np.nan])
+                    fit_params = {
+                        'model': 'linear',
+                        'a': float(popt[0]),
+                        'b': float(popt[1]),
+                        'a_unit': f'P.E./{fit_x_unit}',
+                        'b_unit': 'P.E.'
+                    }
+                    fit_param_err = {'a_err': float(perr[0]), 'b_err': float(perr[1])}
+
+                    y_pred_fit = linear_model(x_in, *popt)
+                    chi2, ndof, red_chi2 = compute_fit_quality(y_in, y_pred_fit, sigma_in, n_params)
+                    fit_params.update({'chi2': chi2, 'ndof': ndof, 'reduced_chi2': red_chi2})
+
+                    x_line_num = np.linspace(np.min(x_fit), np.max(x_fit), 200)
+                    y_line = linear_model(x_line_num, *popt)
+                    if use_dates:
+                        x_line = mdates.num2date(x_line_num + x_fit_origin)
+                    else:
+                        x_line = x_line_num
+                    plt.plot(
+                        x_line,
+                        y_line,
+                        color='magenta',
+                        linewidth=2.0,
+                        linestyle='-',
+                        label=(
+                            f'Linear fit avg: a={popt[0]:.4e}±{perr[0]:.4e} P.E./{fit_x_unit}, '
+                            f'$\\chi^2$/DOF={red_chi2:.1f}'
+                        )
                     )
                 else:
-                    popt, pcov = curve_fit(linear_model, x_fit, y_fit)
+                    n_params = 4
+                    x_span = float(np.max(x_fit) - np.min(x_fit)) if x_fit.size > 1 else 1.0
+                    x_span = max(x_span, 1e-6)
+                    y_min = float(np.min(y_fit))
+                    y_max = float(np.max(y_fit))
+                    a0 = float(y_max - y_min) if np.isfinite(y_max - y_min) and (y_max - y_min) != 0 else 1.0
+                    b0 = y_min
+                    t00 = float(fit_cfg.get('exp_initial_t0', 0.0))
+                    tau0 = float(fit_cfg.get('exp_initial_tau', max(1.0, x_span / 2.0)))
+                    tau_lo = float(fit_cfg.get('exp_tau_min', 1e-6))
+                    tau_hi = float(fit_cfg.get('exp_tau_max', max(10.0, 100.0 * x_span)))
+                    t0_lo = float(fit_cfg.get('exp_t0_min', -5.0 * x_span))
+                    t0_hi = float(fit_cfg.get('exp_t0_max', 5.0 * x_span))
+                    bounds = ([-np.inf, t0_lo, tau_lo, -np.inf], [np.inf, t0_hi, tau_hi, np.inf])
+                    p0 = [a0, t00, tau0, b0]
 
-                perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.array([np.nan, np.nan])
-                fit_params = {'a': float(popt[0]), 'b': float(popt[1]), 'a_unit': f'P.E./{fit_x_unit}', 'b_unit': 'P.E.'}
-                fit_param_err = {'a_err': float(perr[0]), 'b_err': float(perr[1])}
+                    if np.count_nonzero(valid_sigma) >= n_params:
+                        x_in = x_fit[valid_sigma]
+                        y_in = y_fit[valid_sigma]
+                        sigma_in = sigma_fit[valid_sigma]
+                        popt, pcov = curve_fit(
+                            exp_model,
+                            x_in,
+                            y_in,
+                            p0=p0,
+                            bounds=bounds,
+                            sigma=sigma_in,
+                            absolute_sigma=True,
+                            maxfev=100000
+                        )
+                    else:
+                        x_in = x_fit
+                        y_in = y_fit
+                        sigma_in = None
+                        popt, pcov = curve_fit(
+                            exp_model,
+                            x_in,
+                            y_in,
+                            p0=p0,
+                            bounds=bounds,
+                            maxfev=100000
+                        )
 
-                x_line_num = np.linspace(np.min(x_fit), np.max(x_fit), 200)
-                y_line = linear_model(x_line_num, *popt)
-                if use_dates:
-                    x_line = mdates.num2date(x_line_num + x_fit_origin)
-                else:
-                    x_line = x_line_num
-                plt.plot(
-                    x_line,
-                    y_line,
-                    color='magenta',
-                    linewidth=2.0,
-                    linestyle='-',
-                    label=(
-                        f'Linear fit avg: a={popt[0]:.3f}±{perr[0]:.3f} P.E./{fit_x_unit}'
+                    perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.array([np.nan, np.nan, np.nan, np.nan])
+                    fit_params = {
+                        'model': 'exp',
+                        'a': float(popt[0]),
+                        't0': float(popt[1]),
+                        'tau': float(popt[2]),
+                        'b': float(popt[3]),
+                        'tau_unit': fit_x_unit,
+                        't0_unit': fit_x_unit,
+                        'a_unit': 'P.E.',
+                        'b_unit': 'P.E.'
+                    }
+                    fit_param_err = {
+                        'a_err': float(perr[0]),
+                        't0_err': float(perr[1]),
+                        'tau_err': float(perr[2]),
+                        'b_err': float(perr[3])
+                    }
+
+                    y_pred_fit = exp_model(x_in, *popt)
+                    chi2, ndof, red_chi2 = compute_fit_quality(y_in, y_pred_fit, sigma_in, n_params)
+                    fit_params.update({'chi2': chi2, 'ndof': ndof, 'reduced_chi2': red_chi2})
+
+                    x_line_num = np.linspace(np.min(x_fit), np.max(x_fit), 200)
+                    y_line = exp_model(x_line_num, *popt)
+                    if use_dates:
+                        x_line = mdates.num2date(x_line_num + x_fit_origin)
+                    else:
+                        x_line = x_line_num
+                    plt.plot(
+                        x_line,
+                        y_line,
+                        color='magenta',
+                        linewidth=2.0,
+                        linestyle='-',
+                        label=(
+                            f'Exp fit avg: $\\tau={popt[2]:.4e}\\pm{perr[2]:.4e}\\,{fit_x_unit}$, '
+                            f'$\\chi^2/\\mathrm{{DOF}}={red_chi2:.1f}$'
+                        )
                     )
-                )
             except Exception as e:
-                print(f"Warning: Linear fit failed for highlight average evolution. Error: {e}")
+                print(f"Warning: {fit_model} fit failed for highlight average evolution. Error: {e}")
 
         plt.ylabel('Highlight Peak (P.E.)')
         plt.xlabel(x_label)
@@ -1417,7 +1547,7 @@ class MasterAggregator:
         plt.minorticks_on()
         ax = plt.gca()
         self._format_evolution_xaxis(ax, run_df, use_dates)
-        plt.legend(ncol=3, fontsize='small')
+        plt.legend(ncol=3, fontsize='medium')
         plt.tight_layout()
 
         img_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_highlight_peak_evolution.png"
@@ -1440,6 +1570,7 @@ class MasterAggregator:
         with open(pkl_path, 'wb') as f:
             pickle.dump({
                 'plot_data': out_df.to_dict(orient='list'),
+                'fit_model': fit_model,
                 'fit_params': fit_params,
                 'fit_param_err': fit_param_err,
                 'fit_x_unit': fit_x_unit,

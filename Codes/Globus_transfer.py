@@ -13,21 +13,21 @@ import time
 SRC_UUID = "f93d5aec-ef64-4406-838a-2e298b0b54cb"
 DEST_UUID = "0064357e-ed18-4ee7-a58d-27652f398d7c"
 
-# SRC_BASE  = "/data41/coherent/data/d2o/processedData_H2O"
-# DEST_BASE = "/raid1/genli/Data_D2O/M2_data"
+SRC_BASE  = "/data41/coherent/data/d2o/processedData_H2O"
+DEST_BASE = "/raid1/genli/Data_D2O/M2_data"
 
 # SRC_BASE  = "/data9/coherent/data/d2o/processedData"
 # DEST_BASE = "/raid1/genli/Data_D2O/M1_data"
 
-SRC_BASE = "/data41/coherent/data/d2o/processedData"
-DEST_BASE = "/raid1/genli/Data_D2O/M1_data"
+# SRC_BASE = "/data41/coherent/data/d2o/processedData"
+# DEST_BASE = "/raid1/genli/Data_D2O/M1_data"
 
-START_RUN = 15896
-END_RUN = 16896
-STEP = 100
+START_RUN = 4701
+END_RUN = 4766
+STEP = 1
 
-# TAG = "processed_H2O"
-TAG = "processed"
+TAG = "processed_H2O"
+# TAG = "processed"
 VER = "v5"
 # VER = "v4"
 EXT = ".root"

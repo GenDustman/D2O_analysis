@@ -23,17 +23,21 @@ SIPM_CHANNELS = list(range(12, 22))    # SiPM channels: 12-21
 # --- Run & Directory Configuration ---
 DATA_DIR_M1 = "/raid1/genli/Data_D2O/M1_data"
 DATA_DIR_M2 = "/raid1/genli/Data_D2O/M2_data"
-suffix_M1 = "_processed_v5.root"
+# M1 input suffix:
+# - set to "auto" to try candidates in SUFFIX_M1_CANDIDATES (in order)
+# - or set to a fixed suffix string
+suffix_M1 = "auto"
+SUFFIX_M1_CANDIDATES = ["_processed_v5.root", "_processed_v4.root"]
 suffix_M2 = "_processed_H2O_v5.root"
 # --- Cut & Binning Configuration ---
 TIME_INTERVAL_CUT_NS = 2000  # Pile-up cut in ns
 muon_life = 2197  # Muon lifetime in ns
-DELTA_T_CUT = (muon_life, 5*muon_life)      # (min_ns, max_ns)
+DELTA_T_CUT = (muon_life, 10*muon_life)      # (min_ns, max_ns)
 # DELTA_T_CUT = (8*muon_life, 100*muon_life)      # (min_ns, max_ns)
 # DELTA_T_CUT = (960, 10560)      # (min_ns, max_ns)
-PE_CUT = (0, 2000)             # (min_pe, max_pe)
+PE_CUT = (0, 4000)             # (min_pe, max_pe)
 TIME_STD_CUT = 2.5 * 16        # Max standard deviation of PMT hit times in an event (ns)
-MULTIPLICITY_SPE = 1.5         # P.E. threshold to count a PMT as "hit"
+MULTIPLICITY_SPE = 1         # P.E. threshold to count a PMT as "hit"
 MULTIPLICITY_CUT = 11          # Minimum number of hit PMTs for an event
 
 # --- Time quantization & dedicated Δt binning ---
@@ -85,6 +89,16 @@ HIGHLIGHT_FIT_CONFIG = {
     'hist_range': (0, 120),
     'fit_window_half_width_pe': 12.0,
     'min_fit_points': 6,
+}
+
+# --- Highlight peak evolution fit (master aggregation) ---
+# model: "linear" or "exp"
+# exp model: a * exp((x + t0) / tau) + b
+HIGHLIGHT_EVOLUTION_FIT_CONFIG = {
+    'model': 'exp',
+    'exp_initial_t0': 0.0,
+    'exp_initial_tau': 20.0,
+    'exp_tau_min': 1e-6,
 }
 
 # --- Veto Performance Analysis ---
