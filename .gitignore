@@ -1,5 +1,6 @@
 # ignore all CSVs
 *.csv
 globus_batch_runs_*.txt
+*.png
 # ignore SLURM stdout files like slurm-12345.out
 slurm-*.out
