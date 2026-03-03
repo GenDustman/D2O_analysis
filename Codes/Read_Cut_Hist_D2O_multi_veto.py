@@ -211,6 +211,7 @@ class DataProcessor:
         
         area_data_np = np.array(df['area_array'].to_list())[:, config.PMT_CHANNELS]
         pe_per_channel = area_data_np / mu1_safe
+        pe_per_channel = np.clip(pe_per_channel, 0.0, None)
         total_pe = np.sum(pe_per_channel, axis=1)
         
         return total_pe
@@ -218,7 +219,7 @@ class DataProcessor:
     def compute_delta_t(self, df, muon_bits, veto_bits, mult_thresh):
         """Compute time differences Δt between veto events and the preceding muon event."""
         muon_mask = df['triggerBits'] >= muon_bits
-        veto_mask = (df['triggerBits'] == veto_bits) & (df['multiplicity'] > mult_thresh)
+        veto_mask = (df['triggerBits'] == veto_bits) & (df['multiplicity'] >= mult_thresh)
         muon_times = df.loc[muon_mask, 'nsTime'].values
         events = df.loc[veto_mask].copy()
         times = events['nsTime'].values
@@ -1547,6 +1548,7 @@ class RunProcessor:
         
         mu1_safe = np.where(np.isnan(mu1_values_run) | (mu1_values_run <= 0), np.inf, mu1_values_run)
         pe_per_channel = area_data_np / mu1_safe
+        pe_per_channel = np.clip(pe_per_channel, 0.0, None)
         postmcut_mask = pe_per_channel > multiplicity_spe
         
         df_all['multiplicity'] = np.sum(postmcut_mask, axis=1)
@@ -1813,7 +1815,7 @@ def main():
             result_tuple = processor.process_run(
                 run, data_dir, output_dir, config.DELTA_T_CUT, config.PE_CUT, 
                 config.BINS, config.VETO_BINS, config.VETO_RANGE,
-                0.5, config.MULTIPLICITY_CUT, config.TIME_STD_CUT, True,
+                config.MULTIPLICITY_SPE, config.MULTIPLICITY_CUT, config.TIME_STD_CUT, config.LOGSCALE_GENERAL,
                 config.LOW_LIGHT_FIT_RANGE, {}, M1_or_M2
             )
             

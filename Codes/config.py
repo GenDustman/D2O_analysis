@@ -32,13 +32,13 @@ suffix_M2 = "_processed_H2O_v5.root"
 # --- Cut & Binning Configuration ---
 TIME_INTERVAL_CUT_NS = 2000  # Pile-up cut in ns
 muon_life = 2197  # Muon lifetime in ns
-DELTA_T_CUT = (muon_life, 10*muon_life)      # (min_ns, max_ns)
+DELTA_T_CUT = (2400, 32000)      # (min_ns, max_ns), min_ns, max_ns should be n*DELTA_T_BIN_WIDTH_NS
 # DELTA_T_CUT = (8*muon_life, 100*muon_life)      # (min_ns, max_ns)
 # DELTA_T_CUT = (960, 10560)      # (min_ns, max_ns)
-PE_CUT = (0, 4000)             # (min_pe, max_pe)
+PE_CUT = (0, 2000)             # (min_pe, max_pe)
 TIME_STD_CUT = 2.5 * 16        # Max standard deviation of PMT hit times in an event (ns)
-MULTIPLICITY_SPE = 1         # P.E. threshold to count a PMT as "hit"
-MULTIPLICITY_CUT = 11          # Minimum number of hit PMTs for an event
+MULTIPLICITY_SPE = 2         # P.E. threshold to count a PMT as "hit"
+MULTIPLICITY_CUT = 12          # Minimum number of hit PMTs for an event
 
 # --- Time quantization & dedicated Δt binning ---
 TIME_TICK_NS = 16                 # DAQ time granularity
@@ -56,7 +56,7 @@ LOGSCALE_GENERAL = True        # Default log scale for per-run histograms
 
 # --- Fitting Configuration ---
 DO_TAU_FIT = True
-TAU_FIT_WINDOW = (2500, 10000)  # (start_ns, end_ns) for the lifetime fit
+TAU_FIT_WINDOW = (DELTA_T_CUT[0] + DELTA_T_BIN_WIDTH_NS, 10000)  # (start_ns, end_ns) for the lifetime fit
 LOW_LIGHT_FIT_RANGE = (-50, 400) # (min_adc, max_adc) for multi-Gaussian SPE fits
 
 # --- SiPM Analysis Configuration ---

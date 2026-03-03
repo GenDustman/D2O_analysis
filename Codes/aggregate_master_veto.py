@@ -628,13 +628,115 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
     
     # Delta T histogram
     dt_edges = hist_calc.make_dt_edges(delta_t_cut)
-    plotter.plot_histogram(
-        [dt_data], [agg_label], dt_edges,
-        output_dir / f"aggregated_delta_t_{m1_or_m2}.png",
-        f"Aggregated Delta T {agg_label}", "Delta T (ns)", m1_or_m2, logscale_dt
-    )
+    dt_counts, _ = np.histogram(dt_data, bins=dt_edges)
+    dt_centers = 0.5 * (dt_edges[:-1] + dt_edges[1:])
+    dt_err = np.sqrt(dt_counts)
+
+    fit_window = tuple(tau_fit_window) if tau_fit_window is not None else tuple(delta_t_cut)
+    t0 = float(fit_window[0])
+
+    def dt_exp_model(t, A, tau, c):
+        tau_safe = np.maximum(tau, 1e-12)
+        expo = np.clip(-1.0 * (t - t0) / tau_safe, -700, 700)
+        return A * np.exp(expo) + c
+
+    dt_fit_params = None
+    dt_fit_stats = None
+    dt_fit_curve = None
+
     if do_tau_fit:
-        fit_window = config.TAU_FIT_WINDOW
+        fit_mask = (dt_centers >= fit_window[0]) & (dt_centers <= fit_window[1]) & (dt_counts > 0)
+        if np.count_nonzero(fit_mask) >= 4:
+            x_fit = dt_centers[fit_mask]
+            y_fit = dt_counts[fit_mask].astype(float)
+            sigma_fit = np.sqrt(np.maximum(y_fit, 1.0))
+
+            p0_A = max(float(np.max(y_fit) - np.min(y_fit)), 1.0)
+            p0_tau = max(float(fit_window[1] - fit_window[0]) / 2.0, 1.0)
+            p0_c = max(float(np.min(y_fit)), 0.0)
+
+            try:
+                popt, pcov = curve_fit(
+                    dt_exp_model,
+                    x_fit,
+                    y_fit,
+                    p0=(p0_A, p0_tau, p0_c),
+                    sigma=sigma_fit,
+                    absolute_sigma=True,
+                    bounds=([0.0, 1e-9, 0.0], [np.inf, np.inf, np.inf]),
+                    maxfev=20000,
+                )
+                perr = np.sqrt(np.diag(pcov))
+
+                dt_fit_curve = dt_exp_model(dt_centers, *popt)
+                dt_fit_curve = np.clip(dt_fit_curve, 0.0, None)
+
+                y_pred_fit = dt_exp_model(x_fit, *popt)
+                chi2 = float(np.sum(((y_fit - y_pred_fit) / sigma_fit) ** 2))
+                dof = int(len(y_fit) - len(popt))
+                red_chi2 = chi2 / dof if dof > 0 else np.nan
+
+                dt_fit_params = {
+                    'A': float(popt[0]),
+                    'tau': float(popt[1]),
+                    'c': float(popt[2]),
+                    't0': t0,
+                    'A_err': float(perr[0]),
+                    'tau_err': float(perr[1]),
+                    'c_err': float(perr[2]),
+                }
+                dt_fit_stats = {
+                    'chi2': chi2,
+                    'dof': dof,
+                    'red_chi2': float(red_chi2) if np.isfinite(red_chi2) else np.nan,
+                    'fit_window': [float(fit_window[0]), float(fit_window[1])],
+                }
+            except Exception as e:
+                print(f"Warning: Exponential fit failed for aggregated delta_t. Error: {e}")
+        else:
+            print("Warning: Not enough non-zero Delta T bins in fit window for tau fit.")
+
+    plt.figure(figsize=(10, 6))
+    plt.errorbar(dt_centers, dt_counts, yerr=dt_err, fmt='o', label=agg_label, markersize=5, zorder=2)
+    if do_tau_fit:
+        plt.axvspan(fit_window[0], fit_window[1], color='gray', alpha=0.2, label='Fit Window')
+    if dt_fit_curve is not None and dt_fit_params is not None and dt_fit_stats is not None:
+        red = dt_fit_stats['red_chi2']
+        fit_label = (
+            r'Fit: $A\exp\left(-(t-t_0)/\tau\right)+c$'
+            + '\n'
+            + rf'$\tau={dt_fit_params["tau"]:.1f}\pm{dt_fit_params["tau_err"]:.1f}\ \mathrm{{ns}},\ '\
+              rf'\chi^2/\mathrm{{DOF}}={red:.2f}$'
+        )
+        plt.plot(dt_centers, dt_fit_curve, 'r-', linewidth=1.8, label=fit_label, zorder=3)
+
+    plt.xlabel('Delta T (ns)')
+    bin_width_dt = float(np.median(np.diff(dt_edges))) if dt_edges.size > 1 else 0.0
+    plt.ylabel(f'Counts per bin ({bin_width_dt:.1f} ns per bin)')
+    plt.title(f"Aggregated Delta T {agg_label} ({m1_or_m2})")
+    if logscale_dt:
+        plt.yscale('log')
+        plt.ylim(bottom=0.8)
+    plt.legend()
+    plt.minorticks_on()
+    plt.grid(which='major', axis='y', linestyle='-', linewidth=0.75, color='gray')
+    plt.grid(which='minor', axis='y', linestyle=':', linewidth=0.5, color='gray')
+    plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
+    plt.tight_layout()
+    dt_img_path = output_dir / f"aggregated_delta_t_{m1_or_m2}.png"
+    plt.savefig(dt_img_path)
+    plt.close()
+
+    dt_pkl_path = dt_img_path.with_suffix('.pkl')
+    dt_pickle_data = {
+        'centers': dt_centers,
+        'histograms': {agg_label: dt_counts},
+        'errors': {agg_label: dt_err},
+        'fit_model': 'A*exp(-(t-t0)/tau)+c',
+        'fit_params': dt_fit_params,
+        'fit_stats': dt_fit_stats,
+    }
+    plotter.file_handler.save_pickle(dt_pickle_data, dt_pkl_path)
     
     # PE histogram
     pe_edges = hist_calc.bin_edges_from_spec(bins, pe_data, pe_cut)
