@@ -95,7 +95,17 @@ HIGHLIGHT_FIT_CONFIG = {
 # model: "linear" or "exp"
 # exp model: a * exp((x + t0) / tau) + b
 HIGHLIGHT_EVOLUTION_FIT_CONFIG = {
-    'model': 'exp',
+    'model': 'linear',
+    'exp_initial_t0': 0.0,
+    'exp_initial_tau': 20.0,
+    'exp_tau_min': 1e-6,
+}
+
+# --- Michel peak evolution fit (master aggregation) ---
+# model: "linear" or "exp"
+# exp model: a * exp(-(x + t0) / tau) + b
+MICHEL_EVOLUTION_FIT_CONFIG = {
+    'model': 'linear',
     'exp_initial_t0': 0.0,
     'exp_initial_tau': 20.0,
     'exp_tau_min': 1e-6,

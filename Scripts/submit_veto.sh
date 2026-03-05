@@ -11,10 +11,10 @@ SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 RUN_SCRIPT_DIR="/home/genli/D2O_analysis/Codes"
 
 # Hardcoded Run Parameters
-start_run=28727
-end_run=28895
-step=1  # NEW: Process every Nth run
-M1_or_M2="M1"
+start_run=4598
+end_run=4988
+step=10  # NEW: Process every Nth run
+M1_or_M2="M2"
 njobs=40
 partition="blue"
 

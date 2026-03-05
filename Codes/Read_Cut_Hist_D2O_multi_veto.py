@@ -891,7 +891,7 @@ class RunProcessor:
         df_all.to_pickle(run_dir / f"run{run}_{M1_or_M2}_data_with_pe.pkl")
         
         # Apply cuts and generate veto efficiency plots
-        cut_results, pe_trig2, pe_trig2_or_34, veto_summary = self._apply_cuts_and_generate_plots(
+        cut_results, pe_trig2, pe_trig2_or_34, veto_summary, michel_summary = self._apply_cuts_and_generate_plots(
             df_all, run, hist_dir, cut_dir, delta_t_cut, pe_cut, bins, veto_bins,
             vetorange, multiplicity_cut, time_std_cut, logscale, M1_or_M2
         )
@@ -906,6 +906,15 @@ class RunProcessor:
             'total_trig2_or_34': veto_summary.get('total_trig2_or_34', 0),
             'mu1_values': [float(x) if np.isfinite(x) else np.nan for x in np.asarray(mu1_values_run, dtype=float)],
             'mu1_errors': [float(x) if np.isfinite(x) else np.nan for x in np.asarray(mu1_errors_run, dtype=float)],
+            'michel_peak_pe': float(michel_summary.get('peak_location', np.nan)),
+            'michel_peak_pe_err': float(michel_summary.get('peak_location_error', np.nan)),
+            'michel_sigma_pe': float(michel_summary.get('sigma', np.nan)),
+            'michel_sigma_pe_err': float(michel_summary.get('sigma_error', np.nan)),
+            'michel_fwhm_range': [
+                float(michel_summary.get('fwhm_min', np.nan)),
+                float(michel_summary.get('fwhm_max', np.nan))
+            ],
+            'michel_fit_success': bool(michel_summary.get('success', False)),
         }
 
         hl_peak = np.full(12, np.nan)
@@ -1602,10 +1611,133 @@ class RunProcessor:
 
         # Process delta T analysis
         events = self.data_processor.compute_delta_t(df_all, muon_bits=32, veto_bits=2, mult_thresh=multiplicity_cut)
-        cut_results = self._save_cut_histograms(events, delta_t_cut, pe_cut, bins, cut_dir,
+        cut_payload = self._save_cut_histograms(events, delta_t_cut, pe_cut, bins, cut_dir,
                                                f"Run {run}", time_std_cut, M1_or_M2, logscale)
-        
-        return cut_results, pe_trig2, pe_trig2_or_34, veto_summary
+
+        if cut_payload is None:
+            cut_results = None
+            michel_summary = {
+                'success': False,
+                'peak_location': np.nan,
+                'peak_location_error': np.nan,
+                'sigma': np.nan,
+                'sigma_error': np.nan,
+                'fwhm_min': np.nan,
+                'fwhm_max': np.nan
+            }
+        else:
+            cut_results = (
+                cut_payload['delta_t'],
+                cut_payload['total_pe'],
+                cut_payload['multiplicity']
+            )
+            michel_summary = cut_payload.get('michel_fit', {
+                'success': False,
+                'peak_location': np.nan,
+                'peak_location_error': np.nan,
+                'sigma': np.nan,
+                'sigma_error': np.nan,
+                'fwhm_min': np.nan,
+                'fwhm_max': np.nan
+            })
+
+        return cut_results, pe_trig2, pe_trig2_or_34, veto_summary, michel_summary
+
+    def _fit_michel_peak_fwhm(self, centers, counts, errors):
+        """Fit Gaussian+constant in the FWHM region around the histogram peak."""
+        centers = np.asarray(centers, dtype=float)
+        counts = np.asarray(counts, dtype=float)
+        errors = np.asarray(errors, dtype=float)
+
+        fit_summary = {
+            'success': False,
+            'peak_location': np.nan,
+            'peak_location_error': np.nan,
+            'sigma': np.nan,
+            'sigma_error': np.nan,
+            'fwhm_min': np.nan,
+            'fwhm_max': np.nan,
+            'fit_x': np.array([]),
+            'fit_y': np.array([]),
+            'raw_peak': np.nan
+        }
+
+        if centers.size < 5 or counts.size != centers.size:
+            return fit_summary
+
+        peak_idx = int(np.argmax(counts))
+        peak_count = float(counts[peak_idx])
+        fit_summary['raw_peak'] = float(centers[peak_idx])
+        if not np.isfinite(peak_count) or peak_count <= 0:
+            return fit_summary
+
+        half_max = 0.5 * peak_count
+        above_half = counts >= half_max
+        if not above_half[peak_idx]:
+            return fit_summary
+
+        left = peak_idx
+        while left > 0 and above_half[left - 1]:
+            left -= 1
+        right = peak_idx
+        while right < (len(counts) - 1) and above_half[right + 1]:
+            right += 1
+
+        x_fit = centers[left:right + 1]
+        y_fit = counts[left:right + 1]
+        e_fit = errors[left:right + 1]
+        if x_fit.size < 4:
+            return fit_summary
+
+        def gauss_plus_const(x, amp, mu, sigma, c):
+            sigma_safe = np.maximum(sigma, 1e-12)
+            expo = np.clip(-0.5 * ((x - mu) / sigma_safe) ** 2, -700, 700)
+            return amp * np.exp(expo) + c
+
+        c0 = float(max(0.0, np.min(y_fit)))
+        amp0 = float(max(np.max(y_fit) - c0, 1.0))
+        mu0 = float(centers[peak_idx])
+        fwhm_span = float(max(x_fit[-1] - x_fit[0], 1e-6))
+        sigma0 = float(max(fwhm_span / 2.355, 1e-3))
+        sigma_y = np.where(np.isfinite(e_fit) & (e_fit > 0), e_fit, 1.0)
+        x_span_total = float(max(centers[-1] - centers[0], 1e-6))
+
+        try:
+            popt, pcov = curve_fit(
+                gauss_plus_const,
+                x_fit,
+                y_fit,
+                p0=[amp0, mu0, sigma0, c0],
+                bounds=(
+                    [0.0, x_fit[0], 1e-6, 0.0],
+                    [np.inf, x_fit[-1], max(x_span_total, sigma0 * 10.0), np.inf]
+                ),
+                sigma=sigma_y,
+                absolute_sigma=True,
+                maxfev=100000
+            )
+            perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.array([np.nan, np.nan, np.nan, np.nan])
+            mu_fit = float(popt[1])
+            sigma_fit = float(np.abs(popt[2]))
+
+            x_line = np.linspace(x_fit[0], x_fit[-1], 200)
+            y_line = gauss_plus_const(x_line, *popt)
+
+            fit_summary.update({
+                'success': True,
+                'peak_location': mu_fit,
+                'peak_location_error': float(perr[1]),
+                'sigma': sigma_fit,
+                'sigma_error': float(perr[2]),
+                'fwhm_min': float(x_fit[0]),
+                'fwhm_max': float(x_fit[-1]),
+                'fit_x': x_line,
+                'fit_y': y_line
+            })
+        except Exception as e:
+            print(f"Warning: Michel FWHM Gaussian fit failed. Error: {e}")
+
+        return fit_summary
 
     def _fit_and_plot_low_light(self, area_data, output_dir, file_label, M1_or_M2, hist_range, hist_bins=200):
         """Plots and fits sum_area for channels 0-11 for low-light events."""
@@ -1738,10 +1870,25 @@ class RunProcessor:
         mean_pe = sel['total_pe'].mean()
         mean_pe_val = np.round(mean_pe, 1)
         pe_err = np.sqrt(pe_counts)
+        michel_fit = self._fit_michel_peak_fwhm(pe_centers, pe_counts, pe_err)
 
         pe_base_filename = f'total_pe_hist_{M1_or_M2}'
         self.file_handler.save_pickle(
-            {'hist': pe_counts, 'centers': pe_centers, 'errors': pe_err}, 
+            {
+                'hist': pe_counts,
+                'centers': pe_centers,
+                'errors': pe_err,
+                'michel_fit': {
+                    'success': bool(michel_fit.get('success', False)),
+                    'peak_location': float(michel_fit.get('peak_location', np.nan)),
+                    'peak_location_error': float(michel_fit.get('peak_location_error', np.nan)),
+                    'sigma': float(michel_fit.get('sigma', np.nan)),
+                    'sigma_error': float(michel_fit.get('sigma_error', np.nan)),
+                    'fwhm_min': float(michel_fit.get('fwhm_min', np.nan)),
+                    'fwhm_max': float(michel_fit.get('fwhm_max', np.nan)),
+                    'raw_peak': float(michel_fit.get('raw_peak', np.nan))
+                }
+            }, 
             save_dir / f'{pe_base_filename}.pkl'
         )
 
@@ -1752,7 +1899,34 @@ class RunProcessor:
         pe_bin_width = float(np.median(np.diff(pe_edges))) if pe_edges.size > 1 else 0.0
         plt.ylabel(f'Counts per bin ({pe_bin_width:.1f} P.E. per bin)')
         plt.title(f'Total Photoelectron Histogram ({M1_or_M2})')
-        plt.axvline(peak, color='red', linestyle='--', label=f'Peak = {peak} p.e.')
+        plt.axvline(peak, color='gray', linestyle='--', label=f'Raw peak bin = {peak} p.e.')
+        if michel_fit.get('success', False):
+            fit_x = np.asarray(michel_fit['fit_x'], dtype=float)
+            fit_y = np.asarray(michel_fit['fit_y'], dtype=float)
+            plt.plot(
+                fit_x,
+                fit_y,
+                color='red',
+                linewidth=2.0,
+                label=(
+                    f"Michel fit in FWHM: $\\mu$={michel_fit['peak_location']:.2f}±{michel_fit['peak_location_error']:.2f}, "
+                    f"$\\sigma$={michel_fit['sigma']:.2f}±{michel_fit['sigma_error']:.2f}"
+                )
+            )
+            plt.axvline(
+                michel_fit['peak_location'],
+                color='red',
+                linestyle=':',
+                linewidth=1.6,
+                label=f"Michel peak = {michel_fit['peak_location']:.2f} p.e."
+            )
+            plt.axvspan(
+                michel_fit['fwhm_min'],
+                michel_fit['fwhm_max'],
+                color='red',
+                alpha=0.12,
+                label='FWHM fit window'
+            )
         if logscale: 
             plt.yscale('log')
         plt.legend()
@@ -1761,7 +1935,12 @@ class RunProcessor:
         plt.savefig(save_dir / f'{pe_base_filename}.png')
         plt.close()
 
-        return sel['delta_t'].values, sel['total_pe'].values, sel['multiplicity'].values
+        return {
+            'delta_t': sel['delta_t'].values,
+            'total_pe': sel['total_pe'].values,
+            'multiplicity': sel['multiplicity'].values,
+            'michel_fit': michel_fit
+        }
 
 def main():
     """Entry point for a single sub-job."""

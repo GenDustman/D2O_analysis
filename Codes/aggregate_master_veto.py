@@ -1038,6 +1038,23 @@ class MasterAggregator:
                 except (TypeError, ValueError):
                     hl_avg_val = np.nan
 
+                try:
+                    michel_peak_val = float(info.get('michel_peak_pe', np.nan))
+                except (TypeError, ValueError):
+                    michel_peak_val = np.nan
+                try:
+                    michel_peak_err_val = float(info.get('michel_peak_pe_err', np.nan))
+                except (TypeError, ValueError):
+                    michel_peak_err_val = np.nan
+                try:
+                    michel_sigma_val = float(info.get('michel_sigma_pe', np.nan))
+                except (TypeError, ValueError):
+                    michel_sigma_val = np.nan
+                try:
+                    michel_sigma_err_val = float(info.get('michel_sigma_pe_err', np.nan))
+                except (TypeError, ValueError):
+                    michel_sigma_err_val = np.nan
+
                 if run_number is None:
                     continue
 
@@ -1056,6 +1073,10 @@ class MasterAggregator:
                     'highlight_peak_pe': hl_peak,
                     'highlight_peak_pe_err': hl_peak_err,
                     'highlight_avg_pe': hl_avg_val if np.isfinite(hl_avg_val) else np.nan,
+                    'michel_peak_pe': michel_peak_val if np.isfinite(michel_peak_val) else np.nan,
+                    'michel_peak_pe_err': michel_peak_err_val if np.isfinite(michel_peak_err_val) else np.nan,
+                    'michel_sigma_pe': michel_sigma_val if np.isfinite(michel_sigma_val) else np.nan,
+                    'michel_sigma_pe_err': michel_sigma_err_val if np.isfinite(michel_sigma_err_val) else np.nan,
                 })
             except Exception as e:
                 print(f"  Warning: Could not read run-level veto summary from {summary_file}. Error: {e}")
@@ -1185,6 +1206,7 @@ class MasterAggregator:
         self._generate_main_plots()
         self._generate_veto_plots()
         self._generate_veto_efficiency_evolution_plot()
+        self._generate_michel_peak_evolution_plot()
         self._generate_mu1_evolution_plot()
         self._generate_low_light_plots()
         self._generate_highlight_plots()
@@ -1336,6 +1358,243 @@ class MasterAggregator:
         print(f"Veto efficiency evolution plot saved to {img_path}")
         print(f"Veto efficiency evolution data saved to {pkl_path}")
 
+    def _generate_michel_peak_evolution_plot(self):
+        """Generate run-by-run Michel peak evolution with configurable linear/exp fit."""
+        if not self.run_veto_summaries:
+            print("No per-run summary data found for Michel peak evolution plot.")
+            return
+
+        run_df = pd.DataFrame(self.run_veto_summaries)
+        if 'michel_peak_pe' not in run_df.columns:
+            print("No Michel peak values found in run summaries.")
+            return
+
+        run_df = run_df.dropna(subset=['michel_peak_pe'])
+        if run_df.empty:
+            print("Run summaries present, but no valid Michel peak values were found.")
+            return
+
+        run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+
+        y = run_df['michel_peak_pe'].to_numpy(dtype=float)
+        yerr_raw = run_df['michel_peak_pe_err'].to_numpy(dtype=float) if 'michel_peak_pe_err' in run_df.columns else np.full_like(y, np.nan)
+        sigma_vals = run_df['michel_sigma_pe'].to_numpy(dtype=float) if 'michel_sigma_pe' in run_df.columns else np.full_like(y, np.nan)
+        sigma_err_vals = run_df['michel_sigma_pe_err'].to_numpy(dtype=float) if 'michel_sigma_pe_err' in run_df.columns else np.full_like(y, np.nan)
+        yerr_plot = np.where(np.isfinite(yerr_raw), yerr_raw, 0.0)
+
+        plt.figure(figsize=(12, 6))
+        plt.errorbar(
+            x, y, yerr=yerr_plot,
+            fmt='o-', markersize=4, linewidth=1,
+            capsize=2, color='darkred', ecolor='salmon',
+            label='Michel peak from FWHM Gaussian fit'
+        )
+
+        def linear_model(xv, a, b):
+            return a * xv + b
+
+        def exp_model(xv, a, t0, tau, b):
+            tau_safe = np.where(np.abs(tau) < 1e-12, 1e-12, tau)
+            expo = np.clip(-1 * (xv + t0) / tau_safe, -700, 700)
+            return a * np.exp(expo) + b
+
+        def compute_fit_quality(y_obs, y_pred, y_sigma, n_params):
+            valid_obs = np.isfinite(y_obs) & np.isfinite(y_pred)
+            n_obs = int(np.count_nonzero(valid_obs))
+            if n_obs <= n_params:
+                return np.nan, int(n_obs - n_params), np.nan
+
+            if y_sigma is not None:
+                sigma_mask = np.isfinite(y_sigma) & (y_sigma > 0)
+                sigma_mask = sigma_mask & valid_obs
+                n_sigma = int(np.count_nonzero(sigma_mask))
+                if n_sigma > n_params:
+                    resid = (y_obs[sigma_mask] - y_pred[sigma_mask]) / y_sigma[sigma_mask]
+                    chi2 = float(np.sum(resid ** 2))
+                    ndof = int(n_sigma - n_params)
+                    red = chi2 / ndof if ndof > 0 else np.nan
+                    return chi2, ndof, red
+
+            resid = y_obs[valid_obs] - y_pred[valid_obs]
+            chi2 = float(np.sum(resid ** 2))
+            ndof = int(n_obs - n_params)
+            red = chi2 / ndof if ndof > 0 else np.nan
+            return chi2, ndof, red
+
+        fit_cfg = getattr(config, 'MICHEL_EVOLUTION_FIT_CONFIG', {}) or {}
+        fit_model = str(fit_cfg.get('model', 'linear')).strip().lower()
+        if fit_model not in ('linear', 'exp'):
+            print(f"Warning: unsupported MICHEL_EVOLUTION_FIT_CONFIG['model']={fit_model}. Falling back to 'linear'.")
+            fit_model = 'linear'
+
+        fit_x_unit = 'day' if use_dates else 'run'
+        fit_x_origin = None
+        if use_dates:
+            run_dt = pd.to_datetime(run_df['run_datetime'])
+            x_fit_abs = mdates.date2num(run_dt.dt.to_pydatetime())
+            x_fit_origin = float(np.min(x_fit_abs))
+            x_fit_all = x_fit_abs - x_fit_origin
+            fit_x_origin = str(run_dt.min())
+        else:
+            x_fit_all = run_df['run'].to_numpy(dtype=float)
+
+        fit_mask = np.isfinite(x_fit_all) & np.isfinite(y)
+        fit_params = None
+        fit_param_err = None
+        if np.count_nonzero(fit_mask) >= 2:
+            x_fit = np.asarray(x_fit_all[fit_mask], dtype=float)
+            y_fit = np.asarray(y[fit_mask], dtype=float)
+            sigma_fit = np.asarray(yerr_raw[fit_mask], dtype=float)
+            valid_sigma = np.isfinite(sigma_fit) & (sigma_fit > 0)
+            try:
+                if fit_model == 'linear':
+                    n_params = 2
+                    if np.count_nonzero(valid_sigma) >= 2:
+                        x_in = x_fit[valid_sigma]
+                        y_in = y_fit[valid_sigma]
+                        sigma_in = sigma_fit[valid_sigma]
+                        popt, pcov = curve_fit(linear_model, x_in, y_in, sigma=sigma_in, absolute_sigma=True)
+                    else:
+                        x_in = x_fit
+                        y_in = y_fit
+                        sigma_in = None
+                        popt, pcov = curve_fit(linear_model, x_in, y_in)
+
+                    perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.array([np.nan, np.nan])
+                    fit_params = {
+                        'model': 'linear',
+                        'a': float(popt[0]),
+                        'b': float(popt[1]),
+                        'a_unit': f'P.E./{fit_x_unit}',
+                        'b_unit': 'P.E.'
+                    }
+                    fit_param_err = {'a_err': float(perr[0]), 'b_err': float(perr[1])}
+
+                    y_pred_fit = linear_model(x_in, *popt)
+                    chi2, ndof, red_chi2 = compute_fit_quality(y_in, y_pred_fit, sigma_in, n_params)
+                    fit_params.update({'chi2': chi2, 'ndof': ndof, 'reduced_chi2': red_chi2})
+
+                    x_line_num = np.linspace(np.min(x_fit), np.max(x_fit), 200)
+                    y_line = linear_model(x_line_num, *popt)
+                    x_line = mdates.num2date(x_line_num + x_fit_origin) if use_dates else x_line_num
+                    plt.plot(
+                        x_line, y_line,
+                        color='magenta', linewidth=2.0, linestyle='-',
+                        label=(
+                            f'Linear fit: a={popt[0]:.1f}±{perr[0]:.1f} P.E./{fit_x_unit}, '
+                            f'$\\chi^2$/DOF={red_chi2:.1f}'
+                        )
+                    )
+                else:
+                    n_params = 4
+                    x_span = float(np.max(x_fit) - np.min(x_fit)) if x_fit.size > 1 else 1.0
+                    x_span = max(x_span, 1e-6)
+                    y_min = float(np.min(y_fit))
+                    y_max = float(np.max(y_fit))
+                    a0 = float(y_max - y_min) if np.isfinite(y_max - y_min) and (y_max - y_min) != 0 else 1.0
+                    b0 = y_min
+                    t00 = float(fit_cfg.get('exp_initial_t0', 0.0))
+                    tau0 = float(fit_cfg.get('exp_initial_tau', max(1.0, x_span / 2.0)))
+                    tau_lo = float(fit_cfg.get('exp_tau_min', 1e-6))
+                    tau_hi = float(fit_cfg.get('exp_tau_max', max(10.0, 100.0 * x_span)))
+                    t0_lo = float(fit_cfg.get('exp_t0_min', -5.0 * x_span))
+                    t0_hi = float(fit_cfg.get('exp_t0_max', 5.0 * x_span))
+                    bounds = ([-np.inf, t0_lo, tau_lo, -np.inf], [np.inf, t0_hi, tau_hi, np.inf])
+                    p0 = [a0, t00, tau0, b0]
+
+                    if np.count_nonzero(valid_sigma) >= n_params:
+                        x_in = x_fit[valid_sigma]
+                        y_in = y_fit[valid_sigma]
+                        sigma_in = sigma_fit[valid_sigma]
+                        popt, pcov = curve_fit(
+                            exp_model, x_in, y_in,
+                            p0=p0, bounds=bounds,
+                            sigma=sigma_in, absolute_sigma=True,
+                            maxfev=100000
+                        )
+                    else:
+                        x_in = x_fit
+                        y_in = y_fit
+                        sigma_in = None
+                        popt, pcov = curve_fit(exp_model, x_in, y_in, p0=p0, bounds=bounds, maxfev=100000)
+
+                    perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.array([np.nan, np.nan, np.nan, np.nan])
+                    fit_params = {
+                        'model': 'exp',
+                        'a': float(popt[0]),
+                        't0': float(popt[1]),
+                        'tau': float(popt[2]),
+                        'b': float(popt[3]),
+                        'tau_unit': fit_x_unit,
+                        't0_unit': fit_x_unit,
+                        'a_unit': 'P.E.',
+                        'b_unit': 'P.E.'
+                    }
+                    fit_param_err = {
+                        'a_err': float(perr[0]),
+                        't0_err': float(perr[1]),
+                        'tau_err': float(perr[2]),
+                        'b_err': float(perr[3])
+                    }
+
+                    y_pred_fit = exp_model(x_in, *popt)
+                    chi2, ndof, red_chi2 = compute_fit_quality(y_in, y_pred_fit, sigma_in, n_params)
+                    fit_params.update({'chi2': chi2, 'ndof': ndof, 'reduced_chi2': red_chi2})
+
+                    x_line_num = np.linspace(np.min(x_fit), np.max(x_fit), 200)
+                    y_line = exp_model(x_line_num, *popt)
+                    x_line = mdates.num2date(x_line_num + x_fit_origin) if use_dates else x_line_num
+                    plt.plot(
+                        x_line, y_line,
+                        color='magenta', linewidth=2.0, linestyle='-',
+                        label=(
+                            f'Exp fit: $\\tau={popt[2]:.1f}\\pm{perr[2]:.1f}\\,{fit_x_unit}$, '
+                            f'$\\chi^2/\\mathrm{{DOF}}={red_chi2:.1f}$'
+                        )
+                    )
+            except Exception as e:
+                print(f"Warning: {fit_model} fit failed for Michel peak evolution. Error: {e}")
+
+        plt.ylabel('Michel Peak (P.E.)')
+        plt.xlabel(x_label)
+        plt.title(f'Michel Peak Evolution by Run ({self.agg_label}, {self.m1_or_m2})')
+        plt.grid(True, which='major', linestyle='-', linewidth=0.7)
+        plt.grid(True, which='minor', linestyle=':', linewidth=0.5)
+        plt.minorticks_on()
+        ax = plt.gca()
+        self._format_evolution_xaxis(ax, run_df, use_dates)
+        plt.legend()
+        plt.tight_layout()
+
+        img_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_michel_peak_evolution.png"
+        pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_michel_peak_evolution.pkl"
+        csv_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_michel_peak_evolution.csv"
+        plt.savefig(img_path)
+        plt.close()
+
+        out_df = run_df[['run', 'run_dir', 'run_start_time']].copy()
+        out_df['michel_peak_pe'] = y
+        out_df['michel_peak_pe_err'] = yerr_raw
+        out_df['michel_sigma_pe'] = sigma_vals
+        out_df['michel_sigma_pe_err'] = sigma_err_vals
+        if use_dates:
+            out_df['run_datetime'] = pd.to_datetime(run_df['run_datetime']).dt.strftime('%Y-%m-%d %H:00')
+        else:
+            out_df['run_datetime'] = pd.NA
+
+        with open(pkl_path, 'wb') as f:
+            pickle.dump({
+                'plot_data': out_df.to_dict(orient='list'),
+                'fit_model': fit_model,
+                'fit_params': fit_params,
+                'fit_param_err': fit_param_err,
+                'fit_x_unit': fit_x_unit,
+                'fit_x_origin': fit_x_origin
+            }, f)
+        out_df.to_csv(csv_path, index=False)
+        print(f"Michel peak evolution plot saved to {img_path}")
+        print(f"Michel peak evolution data saved to {pkl_path}")
+
     def _generate_mu1_evolution_plot(self):
         """Generate mu1 evolution for all 12 PMT channels."""
         if not self.run_veto_summaries:
@@ -1463,18 +1722,25 @@ class MasterAggregator:
             return a * np.exp(expo) + b
 
         def compute_fit_quality(y_obs, y_pred, y_sigma, n_params):
+            valid_obs = np.isfinite(y_obs) & np.isfinite(y_pred)
+            n_obs = int(np.count_nonzero(valid_obs))
+            if n_obs <= n_params:
+                return np.nan, int(n_obs - n_params), np.nan
+
             if y_sigma is not None:
                 sigma_mask = np.isfinite(y_sigma) & (y_sigma > 0)
-                if np.count_nonzero(sigma_mask) >= max(2, n_params):
+                sigma_mask = sigma_mask & valid_obs
+                n_sigma = int(np.count_nonzero(sigma_mask))
+                if n_sigma > n_params:
                     resid = (y_obs[sigma_mask] - y_pred[sigma_mask]) / y_sigma[sigma_mask]
                     chi2 = float(np.sum(resid ** 2))
-                    ndof = int(np.count_nonzero(sigma_mask) - n_params)
+                    ndof = int(n_sigma - n_params)
                     red = chi2 / ndof if ndof > 0 else np.nan
                     return chi2, ndof, red
 
-            resid = y_obs - y_pred
+            resid = y_obs[valid_obs] - y_pred[valid_obs]
             chi2 = float(np.sum(resid ** 2))
-            ndof = int(len(y_obs) - n_params)
+            ndof = int(n_obs - n_params)
             red = chi2 / ndof if ndof > 0 else np.nan
             return chi2, ndof, red
 
