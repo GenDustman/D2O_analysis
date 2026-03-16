@@ -87,6 +87,9 @@ SIPM_PULSEH_FIT_CONFIG = {
 HIGHLIGHT_FIT_CONFIG = {
     'bins': 120,
     'hist_range': (0, 120),
+    # Dedicated histogram for per-event detector total P.E. (sum over PMT ch 0-11)
+    'sum_bins': 160,
+    'sum_hist_range': (0, 1200),
     'fit_window_half_width_pe': 12.0,
     'min_fit_points': 6,
 }
