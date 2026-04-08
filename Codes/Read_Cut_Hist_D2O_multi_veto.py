@@ -69,6 +69,16 @@ except ImportError:
         LOGSCALE_PE_AGG = True
         DO_TAU_FIT = True
         LOW_LIGHT_FIT_RANGE = (-100, 1000)
+        LOW_LIGHT_PLOT_CONFIG = {
+            'figure_size': (22, 16),
+            'dpi': 300,
+            'suptitle_fontsize': 20,
+            'channel_title_fontsize': 15,
+            'axis_label_fontsize': 13,
+            'tick_labelsize': 12,
+            'legend_fontsize': 11,
+            'annotation_fontsize': 11,
+        }
         PERFORM_THIN_VETO_ANALYSIS = False
         PERFORM_BRN_ANALYSIS = False
         THIN_VETO_CHANNELS = [20, 21]
@@ -332,9 +342,19 @@ class BRNAnalyzer:
         - BRN delta_t: Time between SiPM event (trig 32/34) and previous beam-on (trig 0).
         - Data is stored only for channels that exceed the brn_threshold.
         """
+        pulseh_array = np.asarray(pulseh_array)
+        area_array = np.asarray(area_array)
+
+        if len(df) != len(pulseh_array) or len(df) != len(area_array):
+            raise ValueError(
+                f"BRN input length mismatch: len(df)={len(df)}, "
+                f"len(pulseh_array)={len(pulseh_array)}, len(area_array)={len(area_array)}"
+            )
+
         # Get times for beam-on (trig 0) and SiPM (trig 32/34) events
         beam_on_times = df.loc[df['triggerBits'] == 0, 'nsTime'].values
-        sipm_events = df.loc[(df['triggerBits'] == 32) | (df['triggerBits'] == 34)].copy()
+        sipm_mask = ((df['triggerBits'] == 32) | (df['triggerBits'] == 34)).to_numpy(dtype=bool)
+        sipm_events = df.loc[sipm_mask].copy().reset_index(drop=True)
 
         if sipm_events.empty or beam_on_times.size == 0:
             print("No SiPM events or no beam-on events. Skipping BRN analysis.")
@@ -350,9 +370,8 @@ class BRNAnalyzer:
         sipm_events['brn_delta_t'] = delta_t
         
         # Get the corresponding pulseH and area arrays for the SiPM events
-        sipm_indices = sipm_events.index
-        sipm_pulseh_array = pulseh_array[sipm_indices]
-        sipm_area_array = area_array[sipm_indices]
+        sipm_pulseh_array = pulseh_array[sipm_mask]
+        sipm_area_array = area_array[sipm_mask]
         all_brn_delta_t = sipm_events['brn_delta_t'].values
 
         # Initialize data structure
@@ -360,12 +379,12 @@ class BRNAnalyzer:
 
         # Filter events by delta_t cut (apply to both delta_t and area data)
         dt_min, dt_max = config.BRN_DELTA_T_RANGE
-        dt_cut_mask = (sipm_events['brn_delta_t'] >= dt_min) & (sipm_events['brn_delta_t'] <= dt_max)
-        events_in_dt_range = sipm_events[dt_cut_mask]
+        dt_cut_mask = ((sipm_events['brn_delta_t'] >= dt_min) & (sipm_events['brn_delta_t'] <= dt_max)).to_numpy(dtype=bool)
+        events_in_dt_range = sipm_events.loc[dt_cut_mask]
         
         # Populate delta_t data (only for events in dt cut)
         if not events_in_dt_range.empty:
-            filtered_pulseh_array_dt = pulseh_array[sipm_indices][dt_cut_mask]
+            filtered_pulseh_array_dt = sipm_pulseh_array[dt_cut_mask]
             filtered_brn_delta_t = all_brn_delta_t[dt_cut_mask]
             
             for i in range(len(events_in_dt_range)):
@@ -379,7 +398,7 @@ class BRNAnalyzer:
                         channel_data[ch]['delta_t'].append(event_dt)
         
             # Populate area data (using same filtered events)
-            filtered_area_array = area_array[sipm_indices][dt_cut_mask]
+            filtered_area_array = sipm_area_array[dt_cut_mask]
 
             for i in range(len(events_in_dt_range)):
                 event_pulseh = filtered_pulseh_array_dt[i]
@@ -480,6 +499,33 @@ class BRNAnalyzer:
         plt.tight_layout()
         plt.savefig(output_dir / f'{filename_label}_{M1_or_M2}_brn_area.png')
         plt.close()
+
+    @staticmethod
+    def histogram_brn_channel_data(channel_data, brn_dt_range, hist_config):
+        """Convert BRN per-channel arrays into a compact histogram payload."""
+        dt_min, dt_max = brn_dt_range
+        dt_bin_width = int(getattr(config, 'BRN_DELTA_T_BIN_WIDTH_NS', 128))
+        dt_edges = np.arange(dt_min, dt_max + dt_bin_width, dt_bin_width)
+
+        area_range = tuple(hist_config['area_range'])
+        area_bins = int(hist_config['area_bins'])
+        area_edges = np.linspace(*area_range, area_bins + 1)
+
+        payload = {
+            'delta_t_edges': dt_edges,
+            'area_edges': area_edges,
+            'counts': {},
+        }
+
+        for ch, data in channel_data.items():
+            dt_data = np.asarray(data.get('delta_t', np.array([])), dtype=float)
+            area_data = np.asarray(data.get('area', np.array([])), dtype=float)
+            payload['counts'][ch] = {
+                'delta_t': np.histogram(dt_data, bins=dt_edges)[0],
+                'area': np.histogram(area_data, bins=area_edges)[0],
+            }
+
+        return payload
 
 class Plotter:
     """Handles all plotting operations."""
@@ -882,7 +928,7 @@ class RunProcessor:
             time_interval_mask = (time_diff_ns >= config.TIME_INTERVAL_CUT_NS) | (time_diff_ns.isna())
             
             # Apply the mask to the main DataFrame
-            df_all = df_all[time_interval_mask]
+            df_all = df_all[time_interval_mask].reset_index(drop=True)
             
             print(f"Time interval cut: Kept {len(df_all)} / {original_event_count} events")
         # >>> END: NEW TIME INTERVAL CUT <<<
@@ -891,14 +937,20 @@ class RunProcessor:
         df_all.to_pickle(run_dir / f"run{run}_{M1_or_M2}_data_with_pe.pkl")
         
         # Apply cuts and generate veto efficiency plots
-        cut_results, pe_trig2, pe_trig2_or_34, veto_summary, michel_summary = self._apply_cuts_and_generate_plots(
+        cut_payload, pe_trig2, pe_trig2_or_34, veto_summary, michel_summary = self._apply_cuts_and_generate_plots(
             df_all, run, hist_dir, cut_dir, delta_t_cut, pe_cut, bins, veto_bins,
             vetorange, multiplicity_cut, time_std_cut, logscale, M1_or_M2
         )
+        veto_hist_payload = self._build_veto_hist_payload(
+            pe_trig2.to_numpy(), pe_trig2_or_34.to_numpy(), bins, veto_bins, vetorange, pe_cut
+        )
+
+        beam_on_count = int(np.count_nonzero(df_all['triggerBits'].to_numpy() == 0))
 
         run_veto_summary = {
             'run': int(run),
             'run_start_time': run_start_time_str,
+            'beam_on_count': beam_on_count,
             'average_efficiency': veto_summary.get('average_efficiency', np.nan),
             'average_efficiency_error': veto_summary.get('average_efficiency_error', np.nan),
             'valid_bin_count': veto_summary.get('valid_bin_count', 0),
@@ -938,6 +990,7 @@ class RunProcessor:
         
         # Extract SiPM events (triggerBits >= 32)
         sipm_events_df = df_all[df_all['triggerBits'] >= 32]
+        sipm_hist_payload = self._build_sipm_area_hist_payload(sipm_events_df)
 
         sipm_pulseh_fit_config = self._get_default_sipm_pulseh_fit_config()
         sipm_fit_results = {}
@@ -956,7 +1009,7 @@ class RunProcessor:
         # Initialize thin veto and BRN data
         tv_hist_counts = {}
         tv_bin_edges = {}
-        brn_data = {}
+        brn_hist_payload = None
         
         # Perform thin veto and BRN analysis if pulseH data is available
         if 'pulseH_array' in df_all.columns and (config.PERFORM_THIN_VETO_ANALYSIS or config.PERFORM_BRN_ANALYSIS):
@@ -998,6 +1051,9 @@ class RunProcessor:
                         brn_data, hist_dir, f"Run {run}", M1_or_M2,
                         config.BRN_DELTA_T_RANGE, config.BRN_HIST_CONFIG
                     )
+                    brn_hist_payload = BRNAnalyzer.histogram_brn_channel_data(
+                        brn_data, config.BRN_DELTA_T_RANGE, config.BRN_HIST_CONFIG
+                    )
         else:
             if config.PERFORM_THIN_VETO_ANALYSIS or config.PERFORM_BRN_ANALYSIS:
                 print(f"Warning: 'pulseH_array' not found for run {run}. Skipping thin veto and BRN analysis.")
@@ -1007,25 +1063,27 @@ class RunProcessor:
             )
         
         # Return all processed data
-        if cut_results:
-            dt_vals, pe_vals, mult_vals = cut_results
-            return (dt_vals, pe_vals, mult_vals,
-                   ll_hist_counts, ll_bin_edges,
-                   hl_hist_counts, hl_bin_edges, hl_sum_payload,
-                   sipm_events_df, pe_trig2, pe_trig2_or_34,
-                   tv_hist_counts, tv_bin_edges,
-                   brn_data,
-                   sipm_fit_results,
-                   run_veto_summary)
-        else:
-            return (None, None, None,
-                   ll_hist_counts, ll_bin_edges,
-                   hl_hist_counts, hl_bin_edges, hl_sum_payload,
-                   sipm_events_df, pd.Series(dtype=float), pd.Series(dtype=float),
-                   tv_hist_counts, tv_bin_edges,
-                   brn_data,
-                   sipm_fit_results,
-                   run_veto_summary)
+        if cut_payload:
+            return (
+                cut_payload,
+                ll_hist_counts, ll_bin_edges,
+                hl_hist_counts, hl_bin_edges, hl_sum_payload,
+                sipm_hist_payload, veto_hist_payload,
+                tv_hist_counts, tv_bin_edges,
+                brn_hist_payload,
+                sipm_fit_results,
+                run_veto_summary,
+            )
+        return (
+            None,
+            ll_hist_counts, ll_bin_edges,
+            hl_hist_counts, hl_bin_edges, hl_sum_payload,
+            sipm_hist_payload, veto_hist_payload,
+            tv_hist_counts, tv_bin_edges,
+            brn_hist_payload,
+            sipm_fit_results,
+            run_veto_summary,
+        )
 
     def _get_default_sipm_pulseh_fit_config(self):
         cfg = getattr(config, 'SIPM_PULSEH_FIT_CONFIG', {}) or {}
@@ -1056,6 +1114,53 @@ class RunProcessor:
             'sum_hist_range': tuple(cfg.get('sum_hist_range', (0, 1200))),
             'fit_window_half_width_pe': float(cfg.get('fit_window_half_width_pe', 12.0)),
             'min_fit_points': int(cfg.get('min_fit_points', 6)),
+        }
+
+    def _build_sipm_area_hist_payload(self, sipm_events_df):
+        """Build subjob-level SiPM area histograms without storing raw event frames."""
+        hist_cfg = getattr(config, 'SIPM_HIST_CONFIG', {}) or {}
+        hist_bins = int(hist_cfg.get('hist_bins', 100))
+        hist_range = tuple(hist_cfg.get('hist_range', (-50, 4000)))
+        edges = np.linspace(*hist_range, hist_bins + 1)
+        counts = {ch: np.zeros(hist_bins, dtype=float) for ch in config.SIPM_CHANNELS}
+
+        if sipm_events_df.empty or 'area_array' not in sipm_events_df.columns:
+            return {'edges': edges, 'counts': counts}
+
+        area_data = np.array(sipm_events_df['area_array'].to_list())
+        if area_data.ndim != 2:
+            return {'edges': edges, 'counts': counts}
+
+        for ch in config.SIPM_CHANNELS:
+            if ch < area_data.shape[1]:
+                counts[ch], _ = np.histogram(area_data[:, ch], bins=edges)
+
+        return {'edges': edges, 'counts': counts}
+
+    def _build_veto_hist_payload(self, pe_trig2, pe_trig2_or_34, bins, veto_bins, vetorange, pe_range):
+        """Build master-ready veto histogram payloads at subjob time."""
+        trig2 = np.asarray(pe_trig2, dtype=float)
+        trig2_or_34 = np.asarray(pe_trig2_or_34, dtype=float)
+        if trig2.size > 0 or trig2_or_34.size > 0:
+            comparison_data = np.concatenate([arr for arr in (trig2, trig2_or_34) if arr.size > 0])
+        else:
+            comparison_data = np.array([], dtype=float)
+
+        comparison_edges = self.plotter.hist_calc.bin_edges_from_spec(bins, comparison_data, pe_range)
+        efficiency_edges = np.linspace(vetorange[0] * 0.5, vetorange[1], veto_bins + 1)
+
+        comparison_counts_2, _ = np.histogram(trig2, bins=comparison_edges)
+        comparison_counts_2_or_34, _ = np.histogram(trig2_or_34, bins=comparison_edges)
+        efficiency_counts_2, _ = np.histogram(trig2, bins=efficiency_edges)
+        efficiency_counts_2_or_34, _ = np.histogram(trig2_or_34, bins=efficiency_edges)
+
+        return {
+            'comparison_edges': comparison_edges,
+            'comparison_counts_2': comparison_counts_2,
+            'comparison_counts_2_or_34': comparison_counts_2_or_34,
+            'efficiency_edges': efficiency_edges,
+            'efficiency_counts_2': efficiency_counts_2,
+            'efficiency_counts_2_or_34': efficiency_counts_2_or_34,
         }
 
     @staticmethod
@@ -1784,7 +1889,7 @@ class RunProcessor:
                                                f"Run {run}", time_std_cut, M1_or_M2, logscale)
 
         if cut_payload is None:
-            cut_results = None
+            main_hist_payload = None
             michel_summary = {
                 'success': False,
                 'peak_location': np.nan,
@@ -1795,11 +1900,7 @@ class RunProcessor:
                 'fwhm_max': np.nan
             }
         else:
-            cut_results = (
-                cut_payload['delta_t'],
-                cut_payload['total_pe'],
-                cut_payload['multiplicity']
-            )
+            main_hist_payload = cut_payload
             michel_summary = cut_payload.get('michel_fit', {
                 'success': False,
                 'peak_location': np.nan,
@@ -1810,7 +1911,7 @@ class RunProcessor:
                 'fwhm_max': np.nan
             })
 
-        return cut_results, pe_trig2, pe_trig2_or_34, veto_summary, michel_summary
+        return main_hist_payload, pe_trig2, pe_trig2_or_34, veto_summary, michel_summary
 
     def _fit_michel_peak_fwhm(self, centers, counts, errors):
         """Fit Gaussian+constant in the FWHM region around the histogram peak."""
@@ -1914,6 +2015,16 @@ class RunProcessor:
             print(f"No low-light data to process for {file_label}.")
             return np.full(12, np.nan), np.full(12, np.nan), {}
 
+        plot_cfg = getattr(config, 'LOW_LIGHT_PLOT_CONFIG', {}) or {}
+        figure_size = tuple(plot_cfg.get('figure_size', (22, 16)))
+        dpi = int(plot_cfg.get('dpi', 300))
+        suptitle_fontsize = int(plot_cfg.get('suptitle_fontsize', 20))
+        channel_title_fontsize = int(plot_cfg.get('channel_title_fontsize', 15))
+        axis_label_fontsize = int(plot_cfg.get('axis_label_fontsize', 13))
+        tick_labelsize = int(plot_cfg.get('tick_labelsize', 12))
+        legend_fontsize = int(plot_cfg.get('legend_fontsize', 11))
+        annotation_fontsize = int(plot_cfg.get('annotation_fontsize', 11))
+
         def constrained_gaussians(x, a0, mu0, sig0, a1, mu1, sig1, a2, a3):
             sig2_sq = 2 * sig1**2 - sig0**2
             sig3_sq = 3 * sig1**2 - 2 * sig0**2
@@ -1925,8 +2036,8 @@ class RunProcessor:
             tpe = a3 * np.exp(-0.5 * ((x - 3 * mu1) / np.sqrt(sig3_sq))**2)
             return pedestal + spe + dpe + tpe
 
-        fig, axes = plt.subplots(3, 4, figsize=(20, 15))
-        fig.suptitle(f'Low-Light Channel Area Fits ({file_label}, {M1_or_M2})', fontsize=16)
+        fig, axes = plt.subplots(3, 4, figsize=figure_size)
+        fig.suptitle(f'Low-Light Channel Area Fits ({file_label}, {M1_or_M2})', fontsize=suptitle_fontsize)
         axes = axes.flatten()
         
         mu1_values = np.full(12, np.nan)
@@ -1949,22 +2060,25 @@ class RunProcessor:
                 if len(perr) > 4 and np.isfinite(perr[4]):
                     mu1_errors[i] = perr[4]
                 fit_x = np.linspace(hist_range[0], hist_range[1], 500)
-                ax.plot(fit_x, constrained_gaussians(fit_x, *popt), 'r-', label='Fit')
+                ax.plot(fit_x, constrained_gaussians(fit_x, *popt), 'r-', linewidth=1.8, label='Fit')
                 param_text = (f'$\\mu_1$: {popt[4]:.1f} ± {perr[4]:.1f}\n'
                               f'$\\sigma_1$: {popt[5]:.1f} ± {perr[5]:.1f}')
-                ax.text(0.95, 0.95, param_text, transform=ax.transAxes, fontsize=9,
+                ax.text(0.95, 0.95, param_text, transform=ax.transAxes, fontsize=annotation_fontsize,
                         verticalalignment='top', horizontalalignment='right',
                         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
                 fit_results_data[i] = {'counts': counts, 'edges': edges, 'popt': popt, 'perr': perr}
             except (RuntimeError, ValueError):
-                ax.text(0.5, 0.5, 'Fit Failed', transform=ax.transAxes, color='red', ha='center', va='center')
+                ax.text(0.5, 0.5, 'Fit Failed', transform=ax.transAxes, color='red', ha='center', va='center', fontsize=annotation_fontsize)
                 fit_results_data[i] = {'counts': counts, 'edges': edges, 'popt': None, 'perr': None}
 
-            ax.set_title(f'Channel {i}')
-            ax.set_xlabel('Sum Area (ADC)')
-            ax.set_ylabel('Events')
-            ax.grid(True, which='both', linestyle=':')
-            ax.legend(loc='lower left', fontsize='small')
+            ax.set_title(f'Channel {i}', fontsize=channel_title_fontsize)
+            ax.set_xlabel('Sum Area (ADC)', fontsize=axis_label_fontsize)
+            ax.set_ylabel('Events', fontsize=axis_label_fontsize)
+            ax.tick_params(axis='both', which='both', direction='in', top=True, right=True, labelsize=tick_labelsize)
+            ax.grid(True, which='major', linestyle='-', linewidth=0.7, alpha=0.45)
+            ax.grid(True, which='minor', linestyle=':', linewidth=0.5, alpha=0.35)
+            ax.minorticks_on()
+            ax.legend(loc='lower left', fontsize=legend_fontsize)
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.96])
         self.file_handler.ensure_dir(output_dir)
@@ -1974,7 +2088,7 @@ class RunProcessor:
         img_save_path = output_dir / f'{base_filename}.png'
         pkl_save_path = output_dir / f'{base_filename}.pkl'
         
-        plt.savefig(img_save_path)
+        plt.savefig(img_save_path, dpi=dpi)
         self.file_handler.save_pickle(fit_results_data, pkl_save_path)
         print(f"Low-light fits saved to {img_save_path}")
         print(f"Low-light fit data saved to {pkl_save_path}")
@@ -2108,6 +2222,10 @@ class RunProcessor:
             'delta_t': sel['delta_t'].values,
             'total_pe': sel['total_pe'].values,
             'multiplicity': sel['multiplicity'].values,
+            'delta_t_hist_counts': dt_counts,
+            'delta_t_hist_edges': dt_edges,
+            'total_pe_hist_counts': pe_counts,
+            'total_pe_hist_edges': pe_edges,
             'michel_fit': michel_fit
         }
 
@@ -2144,20 +2262,35 @@ def main():
     # Initialize processor and aggregated data
     processor = RunProcessor()
     aggregated = {
-        'delta_t': [], 'total_pe': [], 'multiplicity': [],
-        'sipm_events': [],
-        'pe_trig2': [], 'pe_trig2_or_34': [],
+        'delta_t_hist': None,
+        'delta_t_edges': None,
+        'total_pe_hist': None,
+        'total_pe_edges': None,
+        'sipm_area_hists': None,
+        'sipm_area_edges': None,
+        'veto_histograms': None,
         'low_light_hists': [],
         'highlight_hists': [],
         'highlight_sum12_hists': [],
         'thin_veto_hists': [],
-        'brn_channel_data': []
+        'brn_channel_hists': None,
+        'brn_delta_t_edges': None,
+        'brn_area_edges': None,
     }
     ll_bin_edges_agg = None
     hl_bin_edges_agg = None
     hl_sum_edges_agg = None
     tv_bin_edges_agg = None
     total_subjob_timelength_ns = 0.0
+
+    def accumulate_counts(existing_counts, existing_edges, new_counts, new_edges, label):
+        new_counts = np.asarray(new_counts, dtype=float)
+        new_edges = np.asarray(new_edges, dtype=float)
+        if existing_counts is None:
+            return new_counts.copy(), new_edges.copy()
+        if existing_edges.shape != new_edges.shape or not np.allclose(existing_edges, new_edges):
+            raise ValueError(f"Histogram edge mismatch while accumulating {label}")
+        return existing_counts + new_counts, existing_edges
 
     # Process runs
     for run in range(start_run, end_run + 1, step):
@@ -2174,21 +2307,30 @@ def main():
                 total_subjob_timelength_ns += run_timelength
                 
                 if result:
-                    (dt_vals, pe_vals, mult_vals,
+                    (main_hist_payload,
                      ll_hists, ll_edges,
                      hl_hists, hl_edges, hl_sum_payload,
-                     sipm_df, pe_2, pe_2_or_34,
+                     sipm_hist_payload, veto_hist_payload,
                      tv_hists, tv_edges,
-                     brn_data,
+                     brn_hist_payload,
                      sipm_fit_data,
                      run_veto_summary) = result
                 
-                if dt_vals is not None: 
-                    aggregated['delta_t'].append(dt_vals)
-                if pe_vals is not None: 
-                    aggregated['total_pe'].append(pe_vals)
-                if mult_vals is not None: 
-                    aggregated['multiplicity'].append(mult_vals)
+                if main_hist_payload is not None:
+                    aggregated['delta_t_hist'], aggregated['delta_t_edges'] = accumulate_counts(
+                        aggregated['delta_t_hist'],
+                        aggregated['delta_t_edges'],
+                        main_hist_payload['delta_t_hist_counts'],
+                        main_hist_payload['delta_t_hist_edges'],
+                        'delta_t'
+                    )
+                    aggregated['total_pe_hist'], aggregated['total_pe_edges'] = accumulate_counts(
+                        aggregated['total_pe_hist'],
+                        aggregated['total_pe_edges'],
+                        main_hist_payload['total_pe_hist_counts'],
+                        main_hist_payload['total_pe_hist_edges'],
+                        'total_pe'
+                    )
                 
                 # Low-light histogram data
                 aggregated['low_light_hists'].append(ll_hists)
@@ -2203,12 +2345,35 @@ def main():
                     if hl_sum_edges_agg is None:
                         hl_sum_edges_agg = np.asarray(hl_sum_payload.get('edges', []), dtype=float)
                 
-                if not sipm_df.empty: 
-                    aggregated['sipm_events'].append(sipm_df)
-                if not pe_2.empty: 
-                    aggregated['pe_trig2'].append(pe_2)
-                if not pe_2_or_34.empty: 
-                    aggregated['pe_trig2_or_34'].append(pe_2_or_34)
+                if sipm_hist_payload is not None:
+                    if aggregated['sipm_area_hists'] is None:
+                        aggregated['sipm_area_hists'] = {
+                            ch: np.asarray(counts, dtype=float).copy()
+                            for ch, counts in sipm_hist_payload['counts'].items()
+                        }
+                        aggregated['sipm_area_edges'] = np.asarray(sipm_hist_payload['edges'], dtype=float).copy()
+                    else:
+                        if aggregated['sipm_area_edges'].shape != np.asarray(sipm_hist_payload['edges']).shape or not np.allclose(aggregated['sipm_area_edges'], np.asarray(sipm_hist_payload['edges'], dtype=float)):
+                            raise ValueError("SiPM histogram edge mismatch across runs")
+                        for ch, counts in sipm_hist_payload['counts'].items():
+                            aggregated['sipm_area_hists'][ch] += np.asarray(counts, dtype=float)
+
+                if veto_hist_payload is not None:
+                    if aggregated['veto_histograms'] is None:
+                        aggregated['veto_histograms'] = {
+                            'comparison_edges': np.asarray(veto_hist_payload['comparison_edges'], dtype=float).copy(),
+                            'comparison_counts_2': np.asarray(veto_hist_payload['comparison_counts_2'], dtype=float).copy(),
+                            'comparison_counts_2_or_34': np.asarray(veto_hist_payload['comparison_counts_2_or_34'], dtype=float).copy(),
+                            'efficiency_edges': np.asarray(veto_hist_payload['efficiency_edges'], dtype=float).copy(),
+                            'efficiency_counts_2': np.asarray(veto_hist_payload['efficiency_counts_2'], dtype=float).copy(),
+                            'efficiency_counts_2_or_34': np.asarray(veto_hist_payload['efficiency_counts_2_or_34'], dtype=float).copy(),
+                        }
+                    else:
+                        for edge_key in ('comparison_edges', 'efficiency_edges'):
+                            if aggregated['veto_histograms'][edge_key].shape != np.asarray(veto_hist_payload[edge_key]).shape or not np.allclose(aggregated['veto_histograms'][edge_key], np.asarray(veto_hist_payload[edge_key], dtype=float)):
+                                raise ValueError(f"Veto histogram edge mismatch for {edge_key}")
+                        for count_key in ('comparison_counts_2', 'comparison_counts_2_or_34', 'efficiency_counts_2', 'efficiency_counts_2_or_34'):
+                            aggregated['veto_histograms'][count_key] += np.asarray(veto_hist_payload[count_key], dtype=float)
                 
                 # Thin veto histogram data
                 aggregated['thin_veto_hists'].append(tv_hists)
@@ -2216,8 +2381,31 @@ def main():
                     tv_bin_edges_agg = tv_edges
                 
                 # BRN channel data
-                if brn_data:
-                    aggregated['brn_channel_data'].append(brn_data)
+                if brn_hist_payload is not None:
+                    if aggregated['brn_channel_hists'] is None:
+                        aggregated['brn_channel_hists'] = {
+                            ch: {
+                                'delta_t': np.asarray(counts['delta_t'], dtype=float).copy(),
+                                'area': np.asarray(counts['area'], dtype=float).copy(),
+                            }
+                            for ch, counts in brn_hist_payload['counts'].items()
+                        }
+                        aggregated['brn_delta_t_edges'] = np.asarray(brn_hist_payload['delta_t_edges'], dtype=float).copy()
+                        aggregated['brn_area_edges'] = np.asarray(brn_hist_payload['area_edges'], dtype=float).copy()
+                    else:
+                        if aggregated['brn_delta_t_edges'].shape != np.asarray(brn_hist_payload['delta_t_edges']).shape or not np.allclose(aggregated['brn_delta_t_edges'], np.asarray(brn_hist_payload['delta_t_edges'], dtype=float)):
+                            raise ValueError("BRN delta_t histogram edge mismatch across runs")
+                        if aggregated['brn_area_edges'].shape != np.asarray(brn_hist_payload['area_edges']).shape or not np.allclose(aggregated['brn_area_edges'], np.asarray(brn_hist_payload['area_edges'], dtype=float)):
+                            raise ValueError("BRN area histogram edge mismatch across runs")
+                        for ch, counts in brn_hist_payload['counts'].items():
+                            if ch not in aggregated['brn_channel_hists']:
+                                aggregated['brn_channel_hists'][ch] = {
+                                    'delta_t': np.asarray(counts['delta_t'], dtype=float).copy(),
+                                    'area': np.asarray(counts['area'], dtype=float).copy(),
+                                }
+                            else:
+                                aggregated['brn_channel_hists'][ch]['delta_t'] += np.asarray(counts['delta_t'], dtype=float)
+                                aggregated['brn_channel_hists'][ch]['area'] += np.asarray(counts['area'], dtype=float)
                     
         except Exception as e:
             print(f"Error processing run {run}: {e}")
@@ -2228,23 +2416,31 @@ def main():
     # Save aggregated data
     print(f"Saving aggregated data for sub-job {start_run}-{end_run}...")
     try:
-        # Save main arrays
-        if aggregated['delta_t']:
-            np.save(output_dir / 'aggregated_delta_t.npy', np.concatenate(aggregated['delta_t']))
-            np.save(output_dir / 'aggregated_total_pe.npy', np.concatenate(aggregated['total_pe']))
-            np.save(output_dir / 'aggregated_multiplicity.npy', np.concatenate(aggregated['multiplicity']))
+        with open(output_dir / 'subjob_format.json', 'w') as f:
+            json.dump({'format_version': 2, 'artifact_mode': 'histogram-only'}, f, indent=4)
 
-        # Save SiPM area data
-        if aggregated['sipm_events']:
-            job_sipm_df = pd.concat(aggregated['sipm_events'], ignore_index=True)
-            job_sipm_area_data = job_sipm_df['area_array']
-            job_sipm_area_data.to_pickle(output_dir / 'aggregated_sipm_area_array.pkl')
-        
-        # Save veto efficiency data
-        if aggregated['pe_trig2']:
-            pd.concat(aggregated['pe_trig2'], ignore_index=True).to_pickle(output_dir / 'aggregated_pe_trig2.pkl')
-        if aggregated['pe_trig2_or_34']:
-            pd.concat(aggregated['pe_trig2_or_34'], ignore_index=True).to_pickle(output_dir / 'aggregated_pe_trig2_or_34.pkl')
+        # Save main histogram data
+        if aggregated['delta_t_hist'] is not None and aggregated['delta_t_edges'] is not None:
+            FileHandler.save_pickle(
+                {'counts': aggregated['delta_t_hist'], 'edges': aggregated['delta_t_edges']},
+                output_dir / 'aggregated_delta_t_hist.pkl'
+            )
+        if aggregated['total_pe_hist'] is not None and aggregated['total_pe_edges'] is not None:
+            FileHandler.save_pickle(
+                {'counts': aggregated['total_pe_hist'], 'edges': aggregated['total_pe_edges']},
+                output_dir / 'aggregated_total_pe_hist.pkl'
+            )
+
+        # Save SiPM histogram data
+        if aggregated['sipm_area_hists'] is not None and aggregated['sipm_area_edges'] is not None:
+            FileHandler.save_pickle(
+                {'counts': aggregated['sipm_area_hists'], 'edges': aggregated['sipm_area_edges']},
+                output_dir / 'aggregated_sipm_area_hists.pkl'
+            )
+
+        # Save veto histogram data
+        if aggregated['veto_histograms'] is not None:
+            FileHandler.save_pickle(aggregated['veto_histograms'], output_dir / 'aggregated_veto_histograms.pkl')
         
         # Save low-light histogram data
         if aggregated['low_light_hists'] and ll_bin_edges_agg is not None:
@@ -2281,10 +2477,16 @@ def main():
             tv_save_data = {'counts': job_tv_master_counts, 'edges': tv_bin_edges_agg}
             FileHandler.save_pickle(tv_save_data, output_dir / 'aggregated_thin_veto_hists.pkl')
         
-        # Save BRN channel data
-        if config.PERFORM_BRN_ANALYSIS and aggregated['brn_channel_data']:
-            with open(output_dir / 'aggregated_brn_channel_data.pkl', 'wb') as f:
-                pickle.dump(aggregated['brn_channel_data'], f)
+        # Save BRN histogram data
+        if config.PERFORM_BRN_ANALYSIS and aggregated['brn_channel_hists'] is not None:
+            FileHandler.save_pickle(
+                {
+                    'counts': aggregated['brn_channel_hists'],
+                    'delta_t_edges': aggregated['brn_delta_t_edges'],
+                    'area_edges': aggregated['brn_area_edges'],
+                },
+                output_dir / 'aggregated_brn_channel_hists.pkl'
+            )
         
         # Save sub-job time length
         subjob_time_data = {

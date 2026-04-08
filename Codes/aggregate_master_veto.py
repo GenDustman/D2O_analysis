@@ -19,6 +19,18 @@ from datetime import datetime
 # Import configuration
 import config
 
+
+MASTER_PLOT_CONFIG = getattr(config, 'MASTER_PLOT_CONFIG', {}) or {}
+
+
+def get_master_plot_config(section, defaults=None):
+    """Return one master-plot config section with optional fallback defaults."""
+    merged = {} if defaults is None else dict(defaults)
+    section_cfg = MASTER_PLOT_CONFIG.get(section, {}) if isinstance(MASTER_PLOT_CONFIG, dict) else {}
+    if isinstance(section_cfg, dict):
+        merged.update(section_cfg)
+    return merged
+
 # Import classes and functions from the refactored processing script
 from Read_Cut_Hist_D2O_multi_veto import (
     FileHandler,
@@ -97,8 +109,9 @@ class BinnedDataPlotter:
         self.file_handler = FileHandler()
         self.hist_calc = HistogramCalculator()
 
-    def plot_histogram_from_binned_data(self, hist_data_dict, bin_edges, img_path, title, xlabel, 
-                                       M1_or_M2, logscale=True, figsize=(10, 6)):
+    def plot_histogram_from_binned_data(self, hist_data_dict, bin_edges, img_path, title, xlabel,
+                                       M1_or_M2, logscale=True, figsize=(10, 6),
+                                       xlim=None, ylim=None, dpi=300):
         """
         Plots one or more overlapping histograms from pre-binned data.
         hist_data_dict = {'label1': counts_array1, 'label2': counts_array2}
@@ -122,21 +135,26 @@ class BinnedDataPlotter:
         plt.title(f"{title} ({M1_or_M2})")
         if logscale:
             plt.yscale('log')
+        if xlim is not None:
+            plt.xlim(xlim)
+        if ylim is not None:
+            plt.ylim(ylim)
         plt.legend()
         plt.minorticks_on()
         plt.grid(which='major', axis='y', linestyle='-', linewidth=0.75, color='gray')
         plt.grid(which='minor', axis='y', linestyle=':', linewidth=0.5, color='gray')
         plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
         plt.tight_layout()
-        plt.savefig(img_path)
+        plt.savefig(img_path, dpi=dpi)
 
         pkl_path = img_path.with_suffix('.pkl')
         pickle_data = {'centers': bin_centers, 'histograms': outputs}
         self.file_handler.save_pickle(pickle_data, pkl_path)
         plt.close()
 
-    def plot_veto_efficiency_from_binned_data(self, counts_2, counts_2_or_34, bin_edges, vetorange, 
-                                            img_path, pkl_path, title, M1_or_M2):
+    def plot_veto_efficiency_from_binned_data(self, counts_2, counts_2_or_34, bin_edges, vetorange,
+                                            img_path, pkl_path, title, M1_or_M2,
+                                            fit_range=None, y_range=None, figsize=(10, 6), dpi=300):
         """
         Calculates and plots veto efficiency from pre-binned counts.
         """
@@ -178,7 +196,10 @@ class BinnedDataPlotter:
         michel_tail_variance = np.zeros_like(counts_2, dtype=float)
         michel_fit_params = None
         michel_fit_cov = None
-        michel_fit_range = (vetorange[0] * 0.5, vetorange[1] * 0.5)
+        if fit_range is None:
+            michel_fit_range = (vetorange[0] * 0.5, vetorange[1] * 0.5)
+        else:
+            michel_fit_range = tuple(fit_range)
 
         fit_mask = (bin_centers >= michel_fit_range[0]) & (bin_centers <= michel_fit_range[1]) & (counts_2 > 0)
         if np.count_nonzero(fit_mask) >= 2:
@@ -255,7 +276,7 @@ class BinnedDataPlotter:
         var_ratio = np.clip(var_ratio, 0.0, None)
         error_sub[valid_mask_sub] = np.sqrt(var_ratio)
 
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=figsize)
         plt.errorbar(bin_centers[valid_mask], efficiency[valid_mask], yerr=error[valid_mask],
                      fmt='o', capsize=3, label=label_raw, color='navy', markersize=5)
         plt.errorbar(bin_centers[valid_mask_sub], efficiency_sub[valid_mask_sub], yerr=error_sub[valid_mask_sub],
@@ -275,14 +296,17 @@ class BinnedDataPlotter:
         plt.ylabel('Veto Efficiency')
         plt.title(f"{title} ({M1_or_M2})")
         plt.xlim(vetorange)
-        plt.ylim(0.995, 1.002)
+        if y_range is not None:
+            plt.ylim(y_range)
+        else:
+            plt.ylim(0.995, 1.002)
         plt.grid(which='major', linestyle='-', linewidth=0.7)
         plt.grid(which='minor', linestyle=':', linewidth=0.5)
         plt.minorticks_on()
         plt.tight_layout()
         plt.legend()
         self.file_handler.ensure_dir(img_path.parent)
-        plt.savefig(img_path)
+        plt.savefig(img_path, dpi=dpi)
         plt.close()
 
         pickle_data = {
@@ -306,7 +330,7 @@ class BinnedDataPlotter:
         self.file_handler.ensure_dir(output_dir)
         filename_label = label.replace(" ", "_").replace("-", "_").replace(":", "")
         
-        fig, axes = plt.subplots(3, 4, figsize=(20, 15))
+        fig, axes = plt.subplots(3, 4, figsize=tuple(hist_config.get('figure_size', (20, 15))))
         fig.suptitle(f'SiPM Channel Area (triggerBits>=32) - {label} ({M1_or_M2})', fontsize=16)
         axes = axes.flatten()
         
@@ -327,7 +351,8 @@ class BinnedDataPlotter:
                 ax.set_xlabel('Area (ADC)')
                 ax.set_ylabel('Events')
                 ax.grid(True, which='both', linestyle=':')
-                ax.set_yscale('log')
+                if hist_config.get('logscale', True):
+                    ax.set_yscale('log')
                 ax.set_xlim(hist_config['hist_range'])
                 if total_events > 0:
                     ax.legend()
@@ -344,7 +369,7 @@ class BinnedDataPlotter:
         img_save_path = output_dir / f'{base_filename}.png'
         pkl_save_path = output_dir / f'{base_filename}.pkl'
         
-        plt.savefig(img_save_path)
+        plt.savefig(img_save_path, dpi=hist_config.get('dpi', 300))
         self.file_handler.save_pickle(sipm_hist_data, pkl_save_path)
         print(f"SiPM histograms saved to {img_save_path}")
         print(f"SiPM histogram data saved to {pkl_save_path}")
@@ -352,7 +377,7 @@ class BinnedDataPlotter:
 
     def plot_normalized_histogram_comparison_from_binned_data(self, counts1, label1, counts2, label2, 
                                                             bin_edges, img_path, title, xlabel, 
-                                                            M1_or_M2, figsize=(10, 6)):
+                                                            M1_or_M2, figsize=(10, 6), dpi=300):
         """
         Plots two datasets as overlapping, normalized histograms from pre-binned counts.
         Uses a log scale on the y-axis.
@@ -386,7 +411,7 @@ class BinnedDataPlotter:
         plt.grid(which='minor', axis='y', linestyle=':', linewidth=0.5, color='gray')
         plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
         plt.tight_layout()
-        plt.savefig(img_path)
+        plt.savefig(img_path, dpi=dpi)
         
         pkl_path = img_path.with_suffix('.pkl')
         if outputs:
@@ -395,8 +420,8 @@ class BinnedDataPlotter:
         
         plt.close()
 
-    def fit_and_plot_low_light_from_binned_data(self, hist_data, bin_edges, output_dir, file_label, 
-                                               M1_or_M2, hist_range):
+    def fit_and_plot_low_light_from_binned_data(self, hist_data, bin_edges, output_dir, file_label,
+                                               M1_or_M2, hist_range, plot_config=None):
         """
         Plots and fits sum_area for channels 0-11 from pre-binned data.
         """
@@ -411,7 +436,8 @@ class BinnedDataPlotter:
             tpe = a3 * np.exp(-0.5 * ((x - 3 * mu1) / np.sqrt(sig3_sq))**2)
             return pedestal + spe + dpe + tpe
 
-        fig, axes = plt.subplots(3, 4, figsize=(20, 15))
+        plot_config = plot_config or {}
+        fig, axes = plt.subplots(3, 4, figsize=tuple(plot_config.get('figure_size', (20, 15))))
         fig.suptitle(f'Low-Light Channel Area Fits ({file_label}, {M1_or_M2})', fontsize=16)
         axes = axes.flatten()
         
@@ -459,7 +485,7 @@ class BinnedDataPlotter:
         img_save_path = output_dir / f'{base_filename}.png'
         pkl_save_path = output_dir / f'{base_filename}.pkl'
         
-        plt.savefig(img_save_path)
+        plt.savefig(img_save_path, dpi=int(plot_config.get('dpi', 300)))
         self.file_handler.save_pickle(fit_results_data, pkl_save_path)
         print(f"Low-light fits saved to {img_save_path}")
         print(f"Low-light fit data saved to {pkl_save_path}")
@@ -467,13 +493,16 @@ class BinnedDataPlotter:
 
     def fit_and_plot_highlight_from_binned_data(self, hist_data, bin_edges, output_dir, file_label,
                                                 M1_or_M2, hist_range,
-                                                sum_hist_counts=None, sum_bin_edges=None, sum_hist_range=None):
+                                                sum_hist_counts=None, sum_bin_edges=None, sum_hist_range=None,
+                                                plot_config=None, sum_plot_config=None):
         """Plots and fits highlight P.E. spectra for PMT channels 0-11 from pre-binned data."""
         def gaussian(x, amp, mu, sigma, c):
             sigma = np.maximum(sigma, 1e-6)
             return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2) + c
 
-        fig, axes = plt.subplots(3, 4, figsize=(20, 15))
+        plot_config = plot_config or {}
+        sum_plot_config = sum_plot_config or {}
+        fig, axes = plt.subplots(3, 4, figsize=tuple(plot_config.get('figure_size', (20, 15))))
         fig.suptitle(f'Highlight PMT P.E. Fits ({file_label}, {M1_or_M2})', fontsize=16)
         axes = axes.flatten()
 
@@ -600,7 +629,7 @@ class BinnedDataPlotter:
         summary_pkl_path = output_dir / f'{base_filename}_summary.pkl'
         summary_csv_path = output_dir / f'{base_filename}_summary.csv'
 
-        plt.savefig(img_save_path)
+        plt.savefig(img_save_path, dpi=int(plot_config.get('dpi', 300)))
         self.file_handler.save_pickle(fit_results_data, pkl_save_path)
         summary_df = pd.DataFrame(records).sort_values('channel')
         summary_df.to_pickle(summary_pkl_path)
@@ -710,7 +739,7 @@ class BinnedDataPlotter:
             else:
                 sum_peak_pe = peak_guess
 
-        sum_fig, sum_ax = plt.subplots(figsize=(10, 6))
+        sum_fig, sum_ax = plt.subplots(figsize=tuple(sum_plot_config.get('figure_size', (10, 6))))
         sum_ax.step(
             sum_bin_edges,
             np.append(sum_counts, sum_counts[-1] if len(sum_counts) > 0 else 0),
@@ -751,7 +780,7 @@ class BinnedDataPlotter:
         sum_summary_csv_path = output_dir / f'{sum_base_filename}_summary.csv'
         sum_summary_pkl_path = output_dir / f'{sum_base_filename}_summary.pkl'
 
-        sum_fig.savefig(sum_img_save_path)
+        sum_fig.savefig(sum_img_save_path, dpi=int(sum_plot_config.get('dpi', 300)))
         plt.close(sum_fig)
 
         sum_pickle_data = {
@@ -784,30 +813,41 @@ class BinnedDataPlotter:
         print(f"Highlight 12-channel summed fit data saved to {sum_pkl_save_path}")
 
 # Simplified aggregate_plots function for compatibility
-def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
-                   output_dir, m1_or_m2, agg_label, logscale_dt, logscale_pe, do_tau_fit):
+def aggregate_plots(aggregated_data, output_dir, m1_or_m2, agg_label, dt_plot_cfg, pe_plot_cfg):
     """Simplified aggregate plots function."""
     print(f"Generating aggregate plots for {agg_label}")
-    
-    if not aggregated_data['delta_t'] or len(aggregated_data['delta_t'][0]) == 0:
+
+    dt_counts = np.asarray(aggregated_data.get('delta_t_hist', []), dtype=float)
+    dt_edges = np.asarray(aggregated_data.get('delta_t_edges', []), dtype=float)
+    pe_counts = np.asarray(aggregated_data.get('total_pe_hist', []), dtype=float)
+    pe_edges = np.asarray(aggregated_data.get('total_pe_edges', []), dtype=float)
+
+    if dt_counts.size == 0 or dt_edges.size < 2:
         print("No delta_t data to plot")
         return
-        
+
     # Create basic plots - this is a placeholder implementation
     # You would need to implement the full plotting logic here
     plotter = Plotter()
-    hist_calc = HistogramCalculator()
-    
-    dt_data = aggregated_data['delta_t'][0]
-    pe_data = aggregated_data['total_pe'][0]
-    
-    # Delta T histogram
-    dt_edges = hist_calc.make_dt_edges(delta_t_cut)
-    dt_counts, _ = np.histogram(dt_data, bins=dt_edges)
+
+    dt_range = tuple(dt_plot_cfg['range'])
+    dt_bin_width = int(dt_plot_cfg['bin_width_ns'])
+    dt_logscale = bool(dt_plot_cfg.get('logscale', True))
+    dt_figsize = tuple(dt_plot_cfg.get('figure_size', (10, 6)))
+    dt_dpi = int(dt_plot_cfg.get('dpi', 300))
+    fit_window = tuple(dt_plot_cfg.get('fit_window', dt_range))
+    do_tau_fit = bool(dt_plot_cfg.get('do_tau_fit', True))
+
+    pe_range = tuple(pe_plot_cfg['range'])
+    pe_bins_spec = pe_plot_cfg['bins']
+    pe_fit_range = tuple(pe_plot_cfg.get('fit_range', (pe_range[0], pe_range[1])))
+    pe_logscale = bool(pe_plot_cfg.get('logscale', True))
+    pe_figsize = tuple(pe_plot_cfg.get('figure_size', (10, 6)))
+    pe_dpi = int(pe_plot_cfg.get('dpi', 300))
+
     dt_centers = 0.5 * (dt_edges[:-1] + dt_edges[1:])
     dt_err = np.sqrt(dt_counts)
 
-    fit_window = tuple(tau_fit_window) if tau_fit_window is not None else tuple(delta_t_cut)
     t0 = float(fit_window[0])
 
     def dt_exp_model(t, A, tau, c):
@@ -871,7 +911,7 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
         else:
             print("Warning: Not enough non-zero Delta T bins in fit window for tau fit.")
 
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=dt_figsize)
     plt.errorbar(dt_centers, dt_counts, yerr=dt_err, fmt='o', label=agg_label, markersize=5, zorder=2)
     if do_tau_fit:
         plt.axvspan(fit_window[0], fit_window[1], color='gray', alpha=0.2, label='Fit Window')
@@ -889,7 +929,7 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
     bin_width_dt = float(np.median(np.diff(dt_edges))) if dt_edges.size > 1 else 0.0
     plt.ylabel(f'Counts per bin ({bin_width_dt:.1f} ns per bin)')
     plt.title(f"Aggregated Delta T {agg_label} ({m1_or_m2})")
-    if logscale_dt:
+    if dt_logscale:
         plt.yscale('log')
         plt.ylim(bottom=0.8)
     plt.legend()
@@ -899,7 +939,7 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
     plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
     plt.tight_layout()
     dt_img_path = output_dir / f"aggregated_delta_t_{m1_or_m2}.png"
-    plt.savefig(dt_img_path)
+    plt.savefig(dt_img_path, dpi=dt_dpi)
     plt.close()
 
     dt_pkl_path = dt_img_path.with_suffix('.pkl')
@@ -913,9 +953,10 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
     }
     plotter.file_handler.save_pickle(dt_pickle_data, dt_pkl_path)
     
-    # PE histogram
-    pe_edges = hist_calc.bin_edges_from_spec(bins, pe_data, pe_cut)
-    pe_counts, _ = np.histogram(pe_data, bins=pe_edges)
+    if pe_counts.size == 0 or pe_edges.size < 2:
+        print("No total_pe histogram data to plot")
+        return
+
     pe_centers = 0.5 * (pe_edges[:-1] + pe_edges[1:])
     pe_err = np.sqrt(pe_counts)
 
@@ -923,7 +964,7 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
     def exp_model(x, a, b):
         return a * np.exp(b * x)
 
-    fit_range = (config.VETO_RANGE[0] * 0.5, config.VETO_RANGE[1] * 0.5)
+    fit_range = pe_fit_range
     fit_mask = (pe_counts > 0) & (pe_centers >= fit_range[0]) & (pe_centers <= fit_range[1])
     fit_params = None
     fit_curve = None
@@ -947,7 +988,7 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
         except Exception as e:
             print(f"Warning: Exponential fit failed for aggregated total PE. Error: {e}")
 
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=pe_figsize)
     plt.errorbar(pe_centers, pe_counts, yerr=pe_err, fmt='o', label=agg_label, markersize=5, zorder=2)
     if fit_curve is not None:
         plt.plot(pe_centers_fit, fit_curve, 'r-', label='Exp fit, a={:.2f}, b={:.2f}'.format(fit_params['a'], fit_params['b']), zorder=3)
@@ -957,7 +998,7 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
     bin_width_pe = float(np.median(np.diff(pe_edges))) if pe_edges.size > 1 else 0.0
     plt.ylabel(f'Counts per bin ({bin_width_pe:.1f} P.E. per bin)')
     plt.title(f"Aggregated Total PE {agg_label} ({m1_or_m2})")
-    if logscale_pe:
+    if pe_logscale:
         plt.yscale('log')
         plt.ylim(bottom=0.8)
     plt.legend()
@@ -967,7 +1008,7 @@ def aggregate_plots(aggregated_data, delta_t_cut, pe_cut, bins, tau_fit_window,
     plt.grid(which='both', axis='x', linestyle='--', linewidth=0.5, color='gray')
     plt.tight_layout()
     pe_img_path = output_dir / f"aggregated_total_pe_{m1_or_m2}.png"
-    plt.savefig(pe_img_path)
+    plt.savefig(pe_img_path, dpi=pe_dpi)
     plt.close()
 
     pe_pkl_path = pe_img_path.with_suffix('.pkl')
@@ -1019,31 +1060,93 @@ class MasterAggregator:
         self.agg_label = f"Master Runs {self.run_range_str}"
         self.filename_label = self.agg_label.replace(" ", "_").replace("-", "_")
 
+    @staticmethod
+    def _rebin_histogram_counts(source_counts, source_edges, target_edges, label):
+        """Rebin a histogram onto coarser aligned edges without revisiting raw events."""
+        source_counts = np.asarray(source_counts, dtype=float)
+        source_edges = np.asarray(source_edges, dtype=float)
+        target_edges = np.asarray(target_edges, dtype=float)
+
+        if source_edges.shape == target_edges.shape and np.allclose(source_edges, target_edges):
+            return source_counts.copy()
+
+        if source_edges.ndim != 1 or target_edges.ndim != 1 or source_edges.size < 2 or target_edges.size < 2:
+            raise ValueError(f"Invalid histogram edges for {label}.")
+
+        tol = 1e-9
+        if target_edges[0] < source_edges[0] - tol or target_edges[-1] > source_edges[-1] + tol:
+            raise ValueError(f"Target edges for {label} extend outside source histogram range.")
+
+        rebinned = np.zeros(len(target_edges) - 1, dtype=float)
+        for idx in range(len(rebinned)):
+            left = int(np.searchsorted(source_edges, target_edges[idx], side='left'))
+            right = int(np.searchsorted(source_edges, target_edges[idx + 1], side='left'))
+
+            if left >= source_edges.size or right >= source_edges.size:
+                raise ValueError(f"Target edges for {label} do not align with source histogram edges.")
+            if not np.isclose(source_edges[left], target_edges[idx], atol=tol, rtol=0.0):
+                raise ValueError(f"Left edge mismatch while rebinnning {label}.")
+            if not np.isclose(source_edges[right], target_edges[idx + 1], atol=tol, rtol=0.0):
+                raise ValueError(f"Right edge mismatch while rebinning {label}.")
+
+            rebinned[idx] = np.sum(source_counts[left:right])
+
+        return rebinned
+
     def _initialize_data_containers(self):
         """Initialize all data container variables."""
-        # Main arrays
-        self.master_dt, self.master_pe, self.master_mult = None, None, None
-        
-        # BRN data
-        self.all_brn_data = []
+        main_dt_cfg = get_master_plot_config('main_delta_t', {
+            'range': config.DELTA_T_CUT,
+            'bin_width_ns': config.DELTA_T_BIN_WIDTH_NS,
+        })
+        main_pe_cfg = get_master_plot_config('main_total_pe', {
+            'range': config.PE_CUT,
+            'bins': config.BINS,
+        })
+
+        dt_range = tuple(main_dt_cfg['range'])
+        dt_bin_width = int(main_dt_cfg.get('bin_width_ns', config.DELTA_T_BIN_WIDTH_NS))
+        self.main_dt_bin_edges = np.arange(dt_range[0], dt_range[1] + dt_bin_width, dt_bin_width)
+        if self.main_dt_bin_edges[-1] < dt_range[1]:
+            self.main_dt_bin_edges = np.append(self.main_dt_bin_edges, dt_range[1])
+        self.master_dt_counts = np.zeros(len(self.main_dt_bin_edges) - 1, dtype=float)
+
+        self.main_pe_bin_edges = self.data_aggregator.hist_calc.bin_edges_from_spec(
+            main_pe_cfg['bins'], np.array([]), tuple(main_pe_cfg['range'])
+        )
+        self.master_pe_counts = np.zeros(len(self.main_pe_bin_edges) - 1, dtype=float)
+        self.main_data_found = False
+
+        sipm_master_cfg = get_master_plot_config('sipm_area_hist', {
+            'hist_bins': config.SIPM_HIST_CONFIG['hist_bins'],
+            'hist_range': config.SIPM_HIST_CONFIG['hist_range'],
+        })
+        comparison_cfg = get_master_plot_config('total_pe_comparison', {
+            'bins': config.BINS,
+            'range': config.PE_CUT,
+        })
+        veto_cfg = get_master_plot_config('veto_efficiency', {
+            'bins': config.VETO_BINS,
+            'range': config.VETO_RANGE,
+        })
 
         # SiPM data
         self.sipm_channels = config.SIPM_CHANNELS
-        self.sipm_bin_edges = np.linspace(*config.SIPM_HIST_CONFIG['hist_range'], 
-                                         config.SIPM_HIST_CONFIG['hist_bins'] + 1)
-        self.master_sipm_hist_counts = {ch: np.zeros(config.SIPM_HIST_CONFIG['hist_bins']) 
+        self.sipm_bin_edges = np.linspace(*sipm_master_cfg['hist_range'], 
+                                         int(sipm_master_cfg['hist_bins']) + 1)
+        self.master_sipm_hist_counts = {ch: np.zeros(int(sipm_master_cfg['hist_bins'])) 
                                        for ch in self.sipm_channels}
         self.sipm_data_found = False
 
         # Veto data
         self.pe_comp_bin_edges = self.data_aggregator.hist_calc.bin_edges_from_spec(
-            config.BINS, np.array([]), config.PE_CUT)
-        self.master_pe_comp_counts_2 = np.zeros(config.BINS)
-        self.master_pe_comp_counts_2_or_34 = np.zeros(config.BINS)
+            comparison_cfg['bins'], np.array([]), tuple(comparison_cfg['range']))
+        self.master_pe_comp_counts_2 = np.zeros(len(self.pe_comp_bin_edges) - 1)
+        self.master_pe_comp_counts_2_or_34 = np.zeros(len(self.pe_comp_bin_edges) - 1)
         
-        self.veto_bin_edges = np.linspace(config.VETO_RANGE[0]*0.5, config.VETO_RANGE[1], config.VETO_BINS + 1)
-        self.master_veto_counts_2 = np.zeros(config.VETO_BINS)
-        self.master_veto_counts_2_or_34 = np.zeros(config.VETO_BINS)
+        self.veto_bin_edges = np.linspace(veto_cfg['range'][0] * 0.5, veto_cfg['range'][1], int(veto_cfg['bins']) + 1)
+        self.master_veto_counts_2 = np.zeros(int(veto_cfg['bins']))
+        self.master_veto_counts_2_or_34 = np.zeros(int(veto_cfg['bins']))
         self.veto_data_found = False
         
         # Low-light data
@@ -1067,10 +1170,40 @@ class MasterAggregator:
         self.master_tv_no_co_a_counts = None
         self.tv_data_found = False
 
+        # BRN histogram data
+        brn_dt_cfg = get_master_plot_config('brn_delta_t', {
+            'channels': config.BRN_SIPM_CHANNELS,
+            'range': config.BRN_DELTA_T_RANGE,
+            'bin_width_ns': config.BRN_DELTA_T_BIN_WIDTH_NS,
+        })
+        brn_area_cfg = get_master_plot_config('brn_area', {
+            'channels': config.BRN_SIPM_CHANNELS,
+            'range': config.BRN_HIST_CONFIG['area_range'],
+            'bins': config.BRN_HIST_CONFIG['area_bins'],
+        })
+        brn_channels = list(brn_dt_cfg.get('channels', config.BRN_SIPM_CHANNELS))
+        brn_dt_range = tuple(brn_dt_cfg.get('range', config.BRN_DELTA_T_RANGE))
+        brn_dt_bin_width = int(brn_dt_cfg.get('bin_width_ns', config.BRN_DELTA_T_BIN_WIDTH_NS))
+        self.brn_delta_t_edges = np.arange(brn_dt_range[0], brn_dt_range[1] + brn_dt_bin_width, brn_dt_bin_width)
+        if self.brn_delta_t_edges[-1] < brn_dt_range[1]:
+            self.brn_delta_t_edges = np.append(self.brn_delta_t_edges, brn_dt_range[1])
+        elif self.brn_delta_t_edges[-1] > brn_dt_range[1]:
+            self.brn_delta_t_edges[-1] = brn_dt_range[1]
+        self.brn_area_edges = np.linspace(*tuple(brn_area_cfg.get('range', config.BRN_HIST_CONFIG['area_range'])), int(brn_area_cfg.get('bins', config.BRN_HIST_CONFIG['area_bins'])) + 1)
+        self.master_brn_hist_counts = {
+            ch: {
+                'delta_t': np.zeros(len(self.brn_delta_t_edges) - 1, dtype=float),
+                'area': np.zeros(len(self.brn_area_edges) - 1, dtype=float),
+            }
+            for ch in brn_channels
+        }
+        self.brn_data_found = False
+
         # Time length data
         self.total_timelength_ns = 0.0
         self.total_timelength_s = 0.0
         self.total_timelength_min = 0.0
+        self.total_beam_on_count = 0
 
         # Run-level veto summary data
         self.run_veto_summaries = []
@@ -1091,61 +1224,131 @@ class MasterAggregator:
             self._load_time_length_data(sub_dir)
 
     def _load_main_arrays(self, sub_dir):
-        """Load main numpy arrays (delta_t, total_pe, multiplicity)."""
-        self.master_dt = self.data_aggregator.incremental_concatenate(
-            self.master_dt, sub_dir / 'aggregated_delta_t.npy')
-        self.master_pe = self.data_aggregator.incremental_concatenate(
-            self.master_pe, sub_dir / 'aggregated_total_pe.npy')
-        self.master_mult = self.data_aggregator.incremental_concatenate(
-            self.master_mult, sub_dir / 'aggregated_multiplicity.npy')
+        """Load main histogram payloads, falling back to old raw arrays if needed."""
+        dt_hist_file = sub_dir / 'aggregated_delta_t_hist.pkl'
+        pe_hist_file = sub_dir / 'aggregated_total_pe_hist.pkl'
+
+        if dt_hist_file.exists():
+            try:
+                with open(dt_hist_file, 'rb') as f:
+                    dt_payload = pickle.load(f)
+                dt_edges = np.asarray(dt_payload.get('edges', []), dtype=float)
+                dt_counts = np.asarray(dt_payload.get('counts', []), dtype=float)
+                if dt_edges.shape == self.main_dt_bin_edges.shape and np.allclose(dt_edges, self.main_dt_bin_edges):
+                    self.master_dt_counts += dt_counts
+                    self.main_data_found = True
+                else:
+                    print(f"  Warning: Delta-t histogram edge mismatch in {sub_dir.name}; skipping histogram payload.")
+            except Exception as e:
+                print(f"  Warning: Could not load Delta-t histogram payload for {sub_dir.name}. Error: {e}")
+        elif (sub_dir / 'aggregated_delta_t.npy').exists():
+            raw_dt = self.data_aggregator.incremental_concatenate(None, sub_dir / 'aggregated_delta_t.npy')
+            if raw_dt is not None and raw_dt.size > 0:
+                self.master_dt_counts += np.histogram(raw_dt, bins=self.main_dt_bin_edges)[0]
+                self.main_data_found = True
+
+        if pe_hist_file.exists():
+            try:
+                with open(pe_hist_file, 'rb') as f:
+                    pe_payload = pickle.load(f)
+                pe_edges = np.asarray(pe_payload.get('edges', []), dtype=float)
+                pe_counts = np.asarray(pe_payload.get('counts', []), dtype=float)
+                if pe_edges.shape == self.main_pe_bin_edges.shape and np.allclose(pe_edges, self.main_pe_bin_edges):
+                    self.master_pe_counts += pe_counts
+                    self.main_data_found = True
+                else:
+                    print(f"  Warning: Total-PE histogram edge mismatch in {sub_dir.name}; skipping histogram payload.")
+            except Exception as e:
+                print(f"  Warning: Could not load Total-PE histogram payload for {sub_dir.name}. Error: {e}")
+        elif (sub_dir / 'aggregated_total_pe.npy').exists():
+            raw_pe = self.data_aggregator.incremental_concatenate(None, sub_dir / 'aggregated_total_pe.npy')
+            if raw_pe is not None and raw_pe.size > 0:
+                self.master_pe_counts += np.histogram(raw_pe, bins=self.main_pe_bin_edges)[0]
+                self.main_data_found = True
 
     def _load_sipm_data(self, sub_dir):
-        """Load and histogram SiPM data."""
-        sipm_file = sub_dir / 'aggregated_sipm_area_array.pkl'
-        if sipm_file.exists():
+        """Load SiPM histogram payloads, falling back to old raw area arrays if needed."""
+        sipm_hist_file = sub_dir / 'aggregated_sipm_area_hists.pkl'
+        if sipm_hist_file.exists():
             self.sipm_data_found = True
             try:
-                job_series = pd.read_pickle(sipm_file)
-                job_area_data = np.array(job_series.to_list())
-                if job_area_data.ndim == 1:
-                    print(f"  Skipping SiPM data for {sub_dir.name}, no valid area arrays found.")
+                with open(sipm_hist_file, 'rb') as f:
+                    sipm_payload = pickle.load(f)
+                sipm_edges = np.asarray(sipm_payload.get('edges', []), dtype=float)
+                if sipm_edges.shape != self.sipm_bin_edges.shape or not np.allclose(sipm_edges, self.sipm_bin_edges):
+                    print(f"  Warning: SiPM histogram edge mismatch in {sub_dir.name}; skipping histogram payload.")
                     return
-                
-                for ch in self.sipm_channels:
-                    if ch < job_area_data.shape[1]:
-                        ch_data = job_area_data[:, ch]
-                        job_counts, _ = np.histogram(ch_data, bins=self.sipm_bin_edges)
-                        self.master_sipm_hist_counts[ch] += job_counts
+
+                for ch, counts in sipm_payload.get('counts', {}).items():
+                    self.master_sipm_hist_counts[int(ch)] += np.asarray(counts, dtype=float)
             except Exception as e:
-                print(f"  Warning: Could not process SiPM data for {sub_dir.name}. Error: {e}")
+                print(f"  Warning: Could not process SiPM histogram payload for {sub_dir.name}. Error: {e}")
+        else:
+            sipm_file = sub_dir / 'aggregated_sipm_area_array.pkl'
+            if sipm_file.exists():
+                self.sipm_data_found = True
+                try:
+                    job_series = pd.read_pickle(sipm_file)
+                    job_area_data = np.array(job_series.to_list())
+                    if job_area_data.ndim == 1:
+                        print(f"  Skipping SiPM data for {sub_dir.name}, no valid area arrays found.")
+                        return
+
+                    for ch in self.sipm_channels:
+                        if ch < job_area_data.shape[1]:
+                            ch_data = job_area_data[:, ch]
+                            job_counts, _ = np.histogram(ch_data, bins=self.sipm_bin_edges)
+                            self.master_sipm_hist_counts[ch] += job_counts
+                except Exception as e:
+                    print(f"  Warning: Could not process SiPM data for {sub_dir.name}. Error: {e}")
 
     def _load_veto_data(self, sub_dir):
-        """Load and histogram veto efficiency data."""
-        # Load trigger=2 data
-        trig2_file = sub_dir / 'aggregated_pe_trig2.pkl'
-        if trig2_file.exists():
+        """Load veto histogram payloads, falling back to old raw PE series if needed."""
+        veto_hist_file = sub_dir / 'aggregated_veto_histograms.pkl'
+        if veto_hist_file.exists():
             self.veto_data_found = True
-            job_series_2 = pd.read_pickle(trig2_file)
-            job_data_2 = job_series_2.to_numpy()
-            
-            job_counts_comp_2, _ = np.histogram(job_data_2, bins=self.pe_comp_bin_edges)
-            job_counts_veto_2, _ = np.histogram(job_data_2, bins=self.veto_bin_edges)
-            
-            self.master_pe_comp_counts_2 += job_counts_comp_2
-            self.master_veto_counts_2 += job_counts_veto_2
+            try:
+                with open(veto_hist_file, 'rb') as f:
+                    veto_payload = pickle.load(f)
+                comp_edges = np.asarray(veto_payload.get('comparison_edges', []), dtype=float)
+                eff_edges = np.asarray(veto_payload.get('efficiency_edges', []), dtype=float)
+                if comp_edges.shape != self.pe_comp_bin_edges.shape or not np.allclose(comp_edges, self.pe_comp_bin_edges):
+                    print(f"  Warning: Veto comparison edge mismatch in {sub_dir.name}; skipping histogram payload.")
+                    return
+                if eff_edges.shape != self.veto_bin_edges.shape or not np.allclose(eff_edges, self.veto_bin_edges):
+                    print(f"  Warning: Veto efficiency edge mismatch in {sub_dir.name}; skipping histogram payload.")
+                    return
 
-        # Load trigger=2 or 34 data
-        trig2_34_file = sub_dir / 'aggregated_pe_trig2_or_34.pkl'
-        if trig2_34_file.exists():
-            self.veto_data_found = True
-            job_series_2_34 = pd.read_pickle(trig2_34_file)
-            job_data_2_34 = job_series_2_34.to_numpy()
+                self.master_pe_comp_counts_2 += np.asarray(veto_payload.get('comparison_counts_2', 0), dtype=float)
+                self.master_pe_comp_counts_2_or_34 += np.asarray(veto_payload.get('comparison_counts_2_or_34', 0), dtype=float)
+                self.master_veto_counts_2 += np.asarray(veto_payload.get('efficiency_counts_2', 0), dtype=float)
+                self.master_veto_counts_2_or_34 += np.asarray(veto_payload.get('efficiency_counts_2_or_34', 0), dtype=float)
+            except Exception as e:
+                print(f"  Warning: Could not process veto histogram payload for {sub_dir.name}. Error: {e}")
+        else:
+            trig2_file = sub_dir / 'aggregated_pe_trig2.pkl'
+            if trig2_file.exists():
+                self.veto_data_found = True
+                job_series_2 = pd.read_pickle(trig2_file)
+                job_data_2 = job_series_2.to_numpy()
 
-            job_counts_comp_2_34, _ = np.histogram(job_data_2_34, bins=self.pe_comp_bin_edges)
-            job_counts_veto_2_34, _ = np.histogram(job_data_2_34, bins=self.veto_bin_edges)
+                job_counts_comp_2, _ = np.histogram(job_data_2, bins=self.pe_comp_bin_edges)
+                job_counts_veto_2, _ = np.histogram(job_data_2, bins=self.veto_bin_edges)
 
-            self.master_pe_comp_counts_2_or_34 += job_counts_comp_2_34
-            self.master_veto_counts_2_or_34 += job_counts_veto_2_34
+                self.master_pe_comp_counts_2 += job_counts_comp_2
+                self.master_veto_counts_2 += job_counts_veto_2
+
+            trig2_34_file = sub_dir / 'aggregated_pe_trig2_or_34.pkl'
+            if trig2_34_file.exists():
+                self.veto_data_found = True
+                job_series_2_34 = pd.read_pickle(trig2_34_file)
+                job_data_2_34 = job_series_2_34.to_numpy()
+
+                job_counts_comp_2_34, _ = np.histogram(job_data_2_34, bins=self.pe_comp_bin_edges)
+                job_counts_veto_2_34, _ = np.histogram(job_data_2_34, bins=self.veto_bin_edges)
+
+                self.master_pe_comp_counts_2_or_34 += job_counts_comp_2_34
+                self.master_veto_counts_2_or_34 += job_counts_veto_2_34
 
     def _parse_run_start_datetime(self, run_dir_name, run_start_time_str):
         """Parse run start datetime from summary string or run directory name."""
@@ -1164,6 +1367,22 @@ class MasterAggregator:
             except ValueError:
                 continue
         return None
+
+    def _load_beam_on_count_from_run_pickle(self, run_dir):
+        """Fallback beam-on count for older run summaries that do not store it."""
+        for data_file in sorted(run_dir.glob('*_data_with_pe.pkl')):
+            try:
+                run_df = pd.read_pickle(data_file)
+            except Exception as e:
+                print(f"  Warning: Could not read beam-on count from {data_file}. Error: {e}")
+                continue
+
+            if 'triggerBits' not in run_df.columns:
+                continue
+
+            return int(np.count_nonzero(run_df['triggerBits'].to_numpy() == 0))
+
+        return 0
 
     def _load_run_level_veto_data(self, sub_dir):
         """Load per-run average veto efficiency summaries from run folders."""
@@ -1193,6 +1412,12 @@ class MasterAggregator:
                     avg_err_val = float(avg_err)
                 except (TypeError, ValueError):
                     avg_err_val = np.nan
+
+                beam_on_count = info.get('beam_on_count')
+                try:
+                    beam_on_count_val = int(beam_on_count)
+                except (TypeError, ValueError):
+                    beam_on_count_val = self._load_beam_on_count_from_run_pickle(run_dir)
 
                 mu1_values = np.asarray(info.get('mu1_values', [np.nan] * 12), dtype=float)
                 if mu1_values.size != 12:
@@ -1240,6 +1465,7 @@ class MasterAggregator:
                     'run_dir': run_dir.name,
                     'run_start_time': run_start_str,
                     'run_datetime': run_dt,
+                    'beam_on_count': beam_on_count_val,
                     'average_efficiency': avg_eff_val if np.isfinite(avg_eff_val) else np.nan,
                     'average_efficiency_error': avg_err_val if np.isfinite(avg_err_val) else np.nan,
                     'valid_bin_count': int(info.get('valid_bin_count', 0)),
@@ -1255,6 +1481,7 @@ class MasterAggregator:
                     'michel_sigma_pe': michel_sigma_val if np.isfinite(michel_sigma_val) else np.nan,
                     'michel_sigma_pe_err': michel_sigma_err_val if np.isfinite(michel_sigma_err_val) else np.nan,
                 })
+                self.total_beam_on_count += beam_on_count_val
             except Exception as e:
                 print(f"  Warning: Could not read run-level veto summary from {summary_file}. Error: {e}")
 
@@ -1345,14 +1572,54 @@ class MasterAggregator:
                 print(f"  Warning: Could not process Thin Veto data for {sub_dir.name}. Error: {e}")
 
     def _load_brn_data(self, sub_dir):
-        """Load BRN analysis data."""
-        brn_file = sub_dir / 'aggregated_brn_channel_data.pkl'
-        if brn_file.exists():
+        """Load BRN histogram payloads, falling back to old raw BRN arrays if needed."""
+        brn_hist_file = sub_dir / 'aggregated_brn_channel_hists.pkl'
+        if brn_hist_file.exists():
             try:
-                with open(brn_file, 'rb') as f:
-                    self.all_brn_data.extend(pickle.load(f))
+                with open(brn_hist_file, 'rb') as f:
+                    brn_payload = pickle.load(f)
+                dt_edges = np.asarray(brn_payload.get('delta_t_edges', []), dtype=float)
+                area_edges = np.asarray(brn_payload.get('area_edges', []), dtype=float)
+                if area_edges.shape != self.brn_area_edges.shape or not np.allclose(area_edges, self.brn_area_edges):
+                    print(f"  Warning: BRN area edge mismatch in {sub_dir.name}; skipping histogram payload.")
+                    return
+
+                self.brn_data_found = True
+                for ch, counts in brn_payload.get('counts', {}).items():
+                    ch = int(ch)
+                    if ch not in self.master_brn_hist_counts:
+                        self.master_brn_hist_counts[ch] = {
+                            'delta_t': np.zeros(len(self.brn_delta_t_edges) - 1, dtype=float),
+                            'area': np.zeros(len(self.brn_area_edges) - 1, dtype=float),
+                        }
+                    rebinned_dt_counts = self._rebin_histogram_counts(
+                        counts.get('delta_t', 0),
+                        dt_edges,
+                        self.brn_delta_t_edges,
+                        f"BRN delta_t for {sub_dir.name} channel {ch}"
+                    )
+                    self.master_brn_hist_counts[ch]['delta_t'] += rebinned_dt_counts
+                    self.master_brn_hist_counts[ch]['area'] += np.asarray(counts.get('area', 0), dtype=float)
             except Exception as e:
-                print(f"Warning: Could not load BRN data from {sub_dir.name}. Error: {e}")
+                print(f"Warning: Could not load BRN histogram payload from {sub_dir.name}. Error: {e}")
+        else:
+            brn_file = sub_dir / 'aggregated_brn_channel_data.pkl'
+            if brn_file.exists():
+                try:
+                    with open(brn_file, 'rb') as f:
+                        raw_brn_data = pickle.load(f)
+                    self.brn_data_found = True
+                    merged = self.data_aggregator.merge_channel_data_dicts(raw_brn_data)
+                    for ch, data in merged.items():
+                        if ch not in self.master_brn_hist_counts:
+                            self.master_brn_hist_counts[ch] = {
+                                'delta_t': np.zeros(len(self.brn_delta_t_edges) - 1, dtype=float),
+                                'area': np.zeros(len(self.brn_area_edges) - 1, dtype=float),
+                            }
+                        self.master_brn_hist_counts[ch]['delta_t'] += np.histogram(np.asarray(data.get('delta_t', []), dtype=float), bins=self.brn_delta_t_edges)[0]
+                        self.master_brn_hist_counts[ch]['area'] += np.histogram(np.asarray(data.get('area', []), dtype=float), bins=self.brn_area_edges)[0]
+                except Exception as e:
+                    print(f"Warning: Could not load BRN data from {sub_dir.name}. Error: {e}")
 
     def _load_time_length_data(self, sub_dir):
         """Load and sum time length data from sub-job directory."""
@@ -1403,6 +1670,7 @@ class MasterAggregator:
         self._generate_main_plots()
         self._generate_veto_plots()
         self._generate_veto_efficiency_evolution_plot()
+        self._generate_beam_on_evolution_plot()
         self._generate_michel_peak_evolution_plot()
         self._generate_mu1_evolution_plot()
         self._generate_low_light_plots()
@@ -1447,39 +1715,70 @@ class MasterAggregator:
 
     def _generate_main_plots(self):
         """Generate delta_t, total_pe, and correlation plots."""
-        if self.master_dt is not None:
+        if self.main_data_found and (self.master_dt_counts.sum() > 0 or self.master_pe_counts.sum() > 0):
             print("Aggregating delta_t, total_pe, and fitting for tau...")
+
+            dt_plot_cfg = get_master_plot_config('main_delta_t', {
+                'range': config.DELTA_T_CUT,
+                'bin_width_ns': config.DELTA_T_BIN_WIDTH_NS,
+                'fit_window': config.TAU_FIT_WINDOW,
+                'logscale': config.LOGSCALE_DT_AGG,
+                'do_tau_fit': config.DO_TAU_FIT,
+                'figure_size': (10, 6),
+                'dpi': 300,
+            })
+            pe_plot_cfg = get_master_plot_config('main_total_pe', {
+                'range': config.PE_CUT,
+                'bins': config.BINS,
+                'fit_range': (config.VETO_RANGE[0] * 0.5, config.VETO_RANGE[1] * 0.5),
+                'logscale': config.LOGSCALE_PE_AGG,
+                'figure_size': (10, 6),
+                'dpi': 300,
+            })
             
             master_aggregated_data = {
-                'delta_t': [self.master_dt], 
-                'total_pe': [self.master_pe], 
-                'multiplicity': [self.master_mult]
+                'delta_t_hist': self.master_dt_counts,
+                'delta_t_edges': self.main_dt_bin_edges,
+                'total_pe_hist': self.master_pe_counts,
+                'total_pe_edges': self.main_pe_bin_edges,
             }
             aggregate_plots(
-                master_aggregated_data, config.DELTA_T_CUT, config.PE_CUT, config.BINS, 
-                config.TAU_FIT_WINDOW, self.master_output_dir, self.m1_or_m2, self.agg_label, 
-                config.LOGSCALE_DT_AGG, config.LOGSCALE_PE_AGG, config.DO_TAU_FIT
+                master_aggregated_data,
+                self.master_output_dir,
+                self.m1_or_m2,
+                self.agg_label,
+                dt_plot_cfg,
+                pe_plot_cfg,
             )
-            
-            master_corr_df = pd.DataFrame({
-                'delta_t': self.master_dt, 
-                'total_pe': self.master_pe, 
-                'multiplicity': self.master_mult
-            })
-            self.plotter.plot_correlation_maps(master_corr_df, self.master_output_dir, 
-                                             self.agg_label, self.m1_or_m2)
 
     def _generate_veto_plots(self):
         """Generate veto efficiency plots."""
         if self.veto_data_found:
             print("Aggregating veto efficiency data...")
+            comparison_cfg = get_master_plot_config('total_pe_comparison', {
+                'range': config.PE_CUT,
+                'logscale': True,
+                'figure_size': (10, 6),
+                'dpi': 300,
+            })
+            veto_cfg = get_master_plot_config('veto_efficiency', {
+                'range': config.VETO_RANGE,
+                'fit_range': (config.VETO_RANGE[0] * 0.5, config.VETO_RANGE[1] * 0.5),
+                'y_range': (0.995, 1.002),
+                'figure_size': (10, 6),
+                'dpi': 300,
+            })
             
             if self.master_pe_comp_counts_2.sum() > 0 or self.master_pe_comp_counts_2_or_34.sum() > 0:
                 self.binned_plotter.plot_histogram_from_binned_data(
                     {'Trig=2 or 34': self.master_pe_comp_counts_2_or_34, 'Trig=2': self.master_pe_comp_counts_2},
                     self.pe_comp_bin_edges,
                     self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_total_pe_comparison_master.png",
-                    f'Total PE Comparison {self.agg_label}', 'Total P.E.', self.m1_or_m2, logscale=True
+                    f'Total PE Comparison {self.agg_label}', 'Total P.E.', self.m1_or_m2,
+                    logscale=bool(comparison_cfg.get('logscale', True)),
+                    figsize=tuple(comparison_cfg.get('figure_size', (10, 6))),
+                    xlim=tuple(comparison_cfg.get('range', config.PE_CUT)),
+                    dpi=int(comparison_cfg.get('dpi', 300)),
                 )
             else:
                 print("No events for Master Total PE comparison; skipping plot.")
@@ -1488,8 +1787,12 @@ class MasterAggregator:
             veto_pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_veto_efficiency_master.pkl"
             self.binned_plotter.plot_veto_efficiency_from_binned_data(
                 self.master_veto_counts_2, self.master_veto_counts_2_or_34,
-                self.veto_bin_edges, config.VETO_RANGE,
-                veto_img_path, veto_pkl_path, f"Veto Efficiency {self.agg_label}", self.m1_or_m2
+                self.veto_bin_edges, tuple(veto_cfg.get('range', config.VETO_RANGE)),
+                veto_img_path, veto_pkl_path, f"Veto Efficiency {self.agg_label}", self.m1_or_m2,
+                fit_range=tuple(veto_cfg.get('fit_range', (config.VETO_RANGE[0] * 0.5, config.VETO_RANGE[1] * 0.5))),
+                y_range=tuple(veto_cfg.get('y_range', (0.995, 1.002))),
+                figsize=tuple(veto_cfg.get('figure_size', (10, 6))),
+                dpi=int(veto_cfg.get('dpi', 300)),
             )
         else:
             print("No Veto Efficiency data found.")
@@ -1507,12 +1810,16 @@ class MasterAggregator:
             return
 
         run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+        plot_cfg = get_master_plot_config('veto_efficiency_evolution', {
+            'figure_size': (12, 6),
+            'dpi': 300,
+        })
 
         y = run_df['average_efficiency'].to_numpy()
         yerr = run_df['average_efficiency_error'].to_numpy()
         finite_err = np.where(np.isfinite(yerr), yerr, 0.0)
 
-        plt.figure(figsize=(12, 6))
+        plt.figure(figsize=tuple(plot_cfg.get('figure_size', (12, 6))))
         plt.errorbar(
             x, y, yerr=finite_err,
             fmt='o-', markersize=4, linewidth=1,
@@ -1536,7 +1843,7 @@ class MasterAggregator:
         pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_veto_efficiency_evolution.pkl"
         csv_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_veto_efficiency_evolution.csv"
 
-        plt.savefig(img_path)
+        plt.savefig(img_path, dpi=int(plot_cfg.get('dpi', 300)))
         plt.close()
 
         out_df = run_df[['run', 'run_dir', 'run_start_time', 'average_efficiency', 'average_efficiency_error',
@@ -1555,6 +1862,83 @@ class MasterAggregator:
         print(f"Veto efficiency evolution plot saved to {img_path}")
         print(f"Veto efficiency evolution data saved to {pkl_path}")
 
+    def _generate_beam_on_evolution_plot(self):
+        """Generate run-by-run beam-on count evolution from saved run summaries."""
+        if not self.run_veto_summaries:
+            print("No per-run summary data found for beam-on evolution plot.")
+            return
+
+        run_df = pd.DataFrame(self.run_veto_summaries)
+        if 'beam_on_count' not in run_df.columns:
+            print("No beam-on counts found in run summaries.")
+            return
+
+        run_df['beam_on_count'] = pd.to_numeric(run_df['beam_on_count'], errors='coerce')
+        run_df = run_df.dropna(subset=['beam_on_count'])
+        if run_df.empty:
+            print("Run-level summaries are present, but no valid beam-on counts were found.")
+            return
+
+        run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+        plot_cfg = get_master_plot_config('beam_on_evolution', {
+            'figure_size': (12, 6),
+            'dpi': 300,
+        })
+
+        y = run_df['beam_on_count'].to_numpy(dtype=float)
+        mean_y = float(np.mean(y)) if y.size > 0 else np.nan
+        median_y = float(np.median(y)) if y.size > 0 else np.nan
+
+        plt.figure(figsize=tuple(plot_cfg.get('figure_size', (12, 6))))
+        plt.plot(
+            x, y,
+            'o-', markersize=4, linewidth=1,
+            color='darkgreen', label='Beam-on count per run'
+        )
+        if np.isfinite(mean_y):
+            plt.axhline(mean_y, color='darkred', linestyle='--', linewidth=1.2,
+                        label=f'Mean = {mean_y:.1f}')
+        if np.isfinite(median_y):
+            plt.axhline(median_y, color='goldenrod', linestyle=':', linewidth=1.4,
+                        label=f'Median = {median_y:.1f}')
+
+        plt.ylabel('Beam-on Count per Run')
+        plt.xlabel(x_label)
+        plt.title(f'Beam-on Count Evolution by Run ({self.agg_label}, {self.m1_or_m2})')
+        plt.grid(True, which='major', linestyle='-', linewidth=0.7)
+        plt.grid(True, which='minor', linestyle=':', linewidth=0.5)
+        plt.minorticks_on()
+
+        ax = plt.gca()
+        self._format_evolution_xaxis(ax, run_df, use_dates)
+
+        plt.legend()
+        plt.tight_layout()
+
+        img_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_beam_on_evolution.png"
+        pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_beam_on_evolution.pkl"
+        csv_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_beam_on_evolution.csv"
+
+        plt.savefig(img_path, dpi=int(plot_cfg.get('dpi', 300)))
+        plt.close()
+
+        out_df = run_df[['run', 'run_dir', 'run_start_time', 'beam_on_count']].copy()
+        if use_dates:
+            out_df['run_datetime'] = pd.to_datetime(run_df['run_datetime']).dt.strftime('%Y-%m-%d %H:00')
+        else:
+            out_df['run_datetime'] = pd.NA
+
+        with open(pkl_path, 'wb') as f:
+            pickle.dump({
+                'run_summaries': self.run_veto_summaries,
+                'plot_data': out_df.to_dict(orient='list'),
+                'mean_beam_on_count': mean_y,
+                'median_beam_on_count': median_y,
+            }, f)
+        out_df.to_csv(csv_path, index=False)
+        print(f"Beam-on evolution plot saved to {img_path}")
+        print(f"Beam-on evolution data saved to {pkl_path}")
+
     def _generate_michel_peak_evolution_plot(self):
         """Generate run-by-run Michel peak evolution with configurable linear/exp fit."""
         if not self.run_veto_summaries:
@@ -1572,6 +1956,10 @@ class MasterAggregator:
             return
 
         run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+        plot_cfg = get_master_plot_config('michel_peak_evolution', {
+            'figure_size': (12, 6),
+            'dpi': 300,
+        })
 
         y = run_df['michel_peak_pe'].to_numpy(dtype=float)
         yerr_raw = run_df['michel_peak_pe_err'].to_numpy(dtype=float) if 'michel_peak_pe_err' in run_df.columns else np.full_like(y, np.nan)
@@ -1579,7 +1967,7 @@ class MasterAggregator:
         sigma_err_vals = run_df['michel_sigma_pe_err'].to_numpy(dtype=float) if 'michel_sigma_pe_err' in run_df.columns else np.full_like(y, np.nan)
         yerr_plot = np.where(np.isfinite(yerr_raw), yerr_raw, 0.0)
 
-        plt.figure(figsize=(12, 6))
+        plt.figure(figsize=tuple(plot_cfg.get('figure_size', (12, 6))))
         plt.errorbar(
             x, y, yerr=yerr_plot,
             fmt='o-', markersize=4, linewidth=1,
@@ -1766,7 +2154,7 @@ class MasterAggregator:
         img_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_michel_peak_evolution.png"
         pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_michel_peak_evolution.pkl"
         csv_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_michel_peak_evolution.csv"
-        plt.savefig(img_path)
+        plt.savefig(img_path, dpi=int(plot_cfg.get('dpi', 300)))
         plt.close()
 
         out_df = run_df[['run', 'run_dir', 'run_start_time']].copy()
@@ -1809,9 +2197,14 @@ class MasterAggregator:
             return
 
         run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+        plot_cfg = get_master_plot_config('mu1_evolution', {
+            'figure_size': (13, 7),
+            'legend_ncol': 3,
+            'dpi': 300,
+        })
         err_matrix = np.vstack(run_df['mu1_errors'].apply(lambda arr: np.asarray(arr, dtype=float)).to_numpy()) if 'mu1_errors' in run_df.columns else np.full((len(run_df), 12), np.nan)
 
-        plt.figure(figsize=(13, 7))
+        plt.figure(figsize=tuple(plot_cfg.get('figure_size', (13, 7))))
         cmap = plt.cm.get_cmap('tab20', 12)
         for ch in range(12):
             y = run_df['mu1_values'].apply(lambda arr: float(np.asarray(arr, dtype=float)[ch])).to_numpy()
@@ -1827,13 +2220,13 @@ class MasterAggregator:
         plt.minorticks_on()
         ax = plt.gca()
         self._format_evolution_xaxis(ax, run_df, use_dates)
-        plt.legend(ncol=3, fontsize='small')
+        plt.legend(ncol=int(plot_cfg.get('legend_ncol', 3)), fontsize='small')
         plt.tight_layout()
 
         img_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_mu1_evolution.png"
         pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_mu1_evolution.pkl"
         csv_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_mu1_evolution.csv"
-        plt.savefig(img_path)
+        plt.savefig(img_path, dpi=int(plot_cfg.get('dpi', 300)))
         plt.close()
 
         out_df = run_df[['run', 'run_dir', 'run_start_time']].copy()
@@ -1855,10 +2248,22 @@ class MasterAggregator:
         """Generate aggregated highlight PMT PE fit plots."""
         if self.hl_data_found and self.master_hl_hist_counts is not None and self.hl_bin_edges is not None:
             print("Plotting aggregated highlight PMT P.E. data...")
-            hl_cfg = getattr(config, 'HIGHLIGHT_FIT_CONFIG', {}) or {}
-            hist_range = tuple(hl_cfg.get('hist_range', (float(self.hl_bin_edges[0]), float(self.hl_bin_edges[-1]))))
-            sum_hist_range = tuple(hl_cfg.get(
-                'sum_hist_range',
+            channel_cfg = get_master_plot_config('highlight_pe_channels', {
+                'hist_range': (float(self.hl_bin_edges[0]), float(self.hl_bin_edges[-1])),
+                'figure_size': (20, 15),
+                'dpi': 300,
+            })
+            sum_cfg = get_master_plot_config('highlight_pe_sum', {
+                'hist_range': (
+                    float(self.hl_sum_bin_edges[0]) if self.hl_sum_bin_edges is not None and len(self.hl_sum_bin_edges) >= 2 else float(self.hl_bin_edges[0]),
+                    float(self.hl_sum_bin_edges[-1]) if self.hl_sum_bin_edges is not None and len(self.hl_sum_bin_edges) >= 2 else float(self.hl_bin_edges[-1]) * 12.0,
+                ),
+                'figure_size': (10, 6),
+                'dpi': 300,
+            })
+            hist_range = tuple(channel_cfg.get('hist_range', (float(self.hl_bin_edges[0]), float(self.hl_bin_edges[-1]))))
+            sum_hist_range = tuple(sum_cfg.get(
+                'hist_range',
                 (float(self.hl_sum_bin_edges[0]), float(self.hl_sum_bin_edges[-1]))
             )) if self.hl_sum_bin_edges is not None and len(self.hl_sum_bin_edges) >= 2 else (
                 float(hist_range[0]), float(hist_range[1]) * 12.0
@@ -1873,6 +2278,8 @@ class MasterAggregator:
                 sum_hist_counts=self.master_hl_sum_counts,
                 sum_bin_edges=self.hl_sum_bin_edges,
                 sum_hist_range=sum_hist_range,
+                plot_config=channel_cfg,
+                sum_plot_config=sum_cfg,
             )
         else:
             print("No Highlight data found to plot.")
@@ -1894,6 +2301,11 @@ class MasterAggregator:
             return
 
         run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+        plot_cfg = get_master_plot_config('highlight_peak_evolution', {
+            'figure_size': (13, 7),
+            'legend_ncol': 3,
+            'dpi': 300,
+        })
         peak_matrix = np.vstack(run_df['highlight_peak_pe'].apply(lambda arr: np.asarray(arr, dtype=float)).to_numpy())
         err_matrix = np.vstack(run_df['highlight_peak_pe_err'].apply(lambda arr: np.asarray(arr, dtype=float)).to_numpy()) if 'highlight_peak_pe_err' in run_df.columns else np.full_like(peak_matrix, np.nan)
         avg_vals = run_df['highlight_avg_pe'].to_numpy(dtype=float) if 'highlight_avg_pe' in run_df.columns else np.nanmean(peak_matrix, axis=1)
@@ -1903,7 +2315,7 @@ class MasterAggregator:
         n_valid_err = np.sum(np.isfinite(finite_err_matrix), axis=1)
         avg_err = np.sqrt(np.nansum(finite_err_matrix ** 2, axis=1)) / np.where(n_valid_err > 0, n_valid_err, np.nan)
 
-        plt.figure(figsize=(13, 7))
+        plt.figure(figsize=tuple(plot_cfg.get('figure_size', (13, 7))))
         cmap = plt.cm.get_cmap('tab20', 12)
         for ch in range(12):
             y = peak_matrix[:, ch]
@@ -2121,13 +2533,13 @@ class MasterAggregator:
         plt.minorticks_on()
         ax = plt.gca()
         self._format_evolution_xaxis(ax, run_df, use_dates)
-        plt.legend(ncol=3, fontsize='medium')
+        plt.legend(ncol=int(plot_cfg.get('legend_ncol', 3)), fontsize='medium')
         plt.tight_layout()
 
         img_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_highlight_peak_evolution.png"
         pkl_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_highlight_peak_evolution.pkl"
         csv_path = self.master_output_dir / f"{self.filename_label}_{self.m1_or_m2}_highlight_peak_evolution.csv"
-        plt.savefig(img_path)
+        plt.savefig(img_path, dpi=int(plot_cfg.get('dpi', 300)))
         plt.close()
 
         out_df = run_df[['run', 'run_dir', 'run_start_time']].copy()
@@ -2157,13 +2569,17 @@ class MasterAggregator:
         """Generate low-light fit plots."""
         if self.ll_data_found:
             print("Plotting aggregated Low-Light data...")
+            plot_cfg = get_master_plot_config('low_light_channels', {
+                'fit_range': config.LOW_LIGHT_FIT_RANGE,
+            })
             self.binned_plotter.fit_and_plot_low_light_from_binned_data(
                 self.master_ll_hist_counts,
                 self.ll_bin_edges,
                 self.master_output_dir,
                 self.agg_label,
                 self.m1_or_m2,
-                hist_range=config.LOW_LIGHT_FIT_RANGE
+                hist_range=tuple(plot_cfg.get('fit_range', config.LOW_LIGHT_FIT_RANGE)),
+                plot_config=plot_cfg,
             )
         else:
             print("No Low-Light data found to plot.")
@@ -2172,13 +2588,14 @@ class MasterAggregator:
         """Generate SiPM histogram plots."""
         if self.sipm_data_found:
             print("Plotting aggregated SiPM area data...")
+            sipm_cfg = get_master_plot_config('sipm_area_hist', dict(config.SIPM_HIST_CONFIG))
             self.binned_plotter.plot_sipm_histograms_from_binned_data(
                 self.master_sipm_hist_counts, 
                 self.sipm_bin_edges, 
                 self.master_output_dir, 
                 self.agg_label, 
                 self.m1_or_m2, 
-                config.SIPM_HIST_CONFIG
+                sipm_cfg
             )
         else:
             print("No SiPM data found to plot.")
@@ -2187,6 +2604,14 @@ class MasterAggregator:
         """Generate thin veto comparison plots."""
         if self.master_tv_muon_h_counts is not None:
             print("Aggregating Thin Veto data...")
+            height_cfg = get_master_plot_config('thin_veto_height_comparison', {
+                'figure_size': (10, 6),
+                'dpi': 300,
+            })
+            area_cfg = get_master_plot_config('thin_veto_area_comparison', {
+                'figure_size': (10, 6),
+                'dpi': 300,
+            })
 
             height_img_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_thin_veto_height_comparison_master.png'
             self.binned_plotter.plot_normalized_histogram_comparison_from_binned_data(
@@ -2194,7 +2619,9 @@ class MasterAggregator:
                 self.master_tv_no_co_h_counts, 'All Triggered Events',
                 self.tv_height_bin_edges, height_img_path, 
                 f'Master Thin Veto Height Comparison - {self.agg_label}',
-                'Pulse Height (ADC)', self.m1_or_m2
+                'Pulse Height (ADC)', self.m1_or_m2,
+                figsize=tuple(height_cfg.get('figure_size', (10, 6))),
+                dpi=int(height_cfg.get('dpi', 300)),
             )
             
             area_img_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_thin_veto_area_comparison_master.png'
@@ -2203,15 +2630,21 @@ class MasterAggregator:
                 self.master_tv_no_co_a_counts, 'All Triggered Events',
                 self.tv_area_bin_edges, area_img_path, 
                 f'Master Thin Veto Area Comparison - {self.agg_label}',
-                'Pulse Area (ADC)', self.m1_or_m2
+                'Pulse Area (ADC)', self.m1_or_m2,
+                figsize=tuple(area_cfg.get('figure_size', (10, 6))),
+                dpi=int(area_cfg.get('dpi', 300)),
             )
 
     def _generate_brn_plots(self):
         """Generate BRN analysis plots."""
-        if self.all_brn_data:
+        if self.brn_data_found and self.master_brn_hist_counts:
             print("Aggregating BRN Analysis data...")
-            master_brn_data = self.data_aggregator.merge_channel_data_dicts(self.all_brn_data)
-            if master_brn_data:
+            master_brn_data = {
+                'counts': self.master_brn_hist_counts,
+                'delta_t_edges': self.brn_delta_t_edges,
+                'area_edges': self.brn_area_edges,
+            }
+            if master_brn_data['counts']:
                 self._plot_brn_histograms(master_brn_data)
             else:
                 print("BRN data was found but failed to merge. Skipping master plots.")
@@ -2219,57 +2652,89 @@ class MasterAggregator:
     def _plot_brn_histograms(self, channel_data):
         """
         Plot BRN (Beam-Related Neutron) analysis histograms for SiPM channels.
-        Creates multi-panel plots showing delta_t and area distributions for channels 12-21.
+        Creates multi-panel plots showing delta_t and area distributions for the
+        BRN-configured SiPM channels.
         
         Args:
-            channel_data: Dictionary with channel numbers as keys and sub-dicts containing
-                         'delta_t' and 'area' numpy arrays as values.
+            channel_data: Histogram payload with shared edges and per-channel counts.
         """
-        if not channel_data:
+        if not channel_data or not channel_data.get('counts'):
             print("No BRN channel data to plot.")
             return
         
-        print(f"Plotting BRN histograms for {len(channel_data)} channels...")
+        print(f"Plotting BRN histograms for {len(channel_data['counts'])} channels...")
         
         # Extract BRN configuration
-        brn_channels = config.BRN_SIPM_CHANNELS
-        delta_t_range = config.BRN_DELTA_T_RANGE
-        area_range = config.BRN_HIST_CONFIG['area_range']
-        area_bins = config.BRN_HIST_CONFIG['area_bins']
-        
-        # Calculate delta_t bins based on range and bin width
-        delta_t_bin_width = config.BRN_DELTA_T_BIN_WIDTH_NS
-        n_delta_t_bins = int((delta_t_range[1] - delta_t_range[0]) / delta_t_bin_width)
-        delta_t_bins = np.linspace(delta_t_range[0], delta_t_range[1], n_delta_t_bins + 1)
-        
-        area_bin_edges = np.linspace(area_range[0], area_range[1], area_bins + 1)
+        brn_dt_cfg = get_master_plot_config('brn_delta_t', {
+            'channels': config.BRN_SIPM_CHANNELS,
+            'range': config.BRN_DELTA_T_RANGE,
+            'bin_width_ns': config.BRN_DELTA_T_BIN_WIDTH_NS,
+            'figure_size': (18, 12),
+            'dpi': 300,
+        })
+        brn_area_cfg = get_master_plot_config('brn_area', {
+            'channels': config.BRN_SIPM_CHANNELS,
+            'range': config.BRN_HIST_CONFIG['area_range'],
+            'bins': config.BRN_HIST_CONFIG['area_bins'],
+            'figure_size': (18, 12),
+            'dpi': 300,
+        })
+        brn_channels = list(brn_dt_cfg.get('channels', config.BRN_SIPM_CHANNELS))
+        delta_t_range = tuple(brn_dt_cfg.get('range', config.BRN_DELTA_T_RANGE))
+        area_range = tuple(brn_area_cfg.get('range', config.BRN_HIST_CONFIG['area_range']))
+        beam_on_total = int(self.total_beam_on_count)
+        delta_t_bins = np.asarray(channel_data.get('delta_t_edges', self.brn_delta_t_edges), dtype=float)
+        area_bin_edges = np.asarray(channel_data.get('area_edges', self.brn_area_edges), dtype=float)
+        channel_counts = channel_data.get('counts', {})
+
+        def _style_brn_axis(ax, xlabel, ylabel, xlim):
+            ax.set_xlabel(xlabel, fontsize=11)
+            ax.set_ylabel(ylabel, fontsize=11)
+            ax.set_xlim(xlim)
+            ax.minorticks_on()
+            ax.grid(True, which='major', linestyle='-', linewidth=0.65, alpha=0.35)
+            ax.grid(True, which='minor', linestyle=':', linewidth=0.45, alpha=0.25)
+            ax.tick_params(axis='both', which='both', direction='in', top=True, right=True, labelsize=10)
+            ax.tick_params(axis='x', which='both', labelbottom=True)
+            for spine in ax.spines.values():
+                spine.set_linewidth(1.0)
         
         # --- Plot Delta_t Histograms ---
-        fig_dt, axes_dt = plt.subplots(3, 4, figsize=(20, 15))
-        fig_dt.suptitle(f'BRN Delta_t Distribution - {self.agg_label} ({self.m1_or_m2})', fontsize=16)
+        fig_dt, axes_dt = plt.subplots(3, 4, figsize=tuple(brn_dt_cfg.get('figure_size', (18, 12))), sharex=True)
+        fig_dt.suptitle(
+            f'Beam-Related Neutron Candidate Timing by SiPM Channel\n{self.agg_label} ({self.m1_or_m2})',
+            fontsize=17,
+            fontweight='bold'
+        )
         axes_dt = axes_dt.flatten()
         
         brn_delta_t_data = {}
         
         for i, ch in enumerate(brn_channels):
             ax = axes_dt[i]
-            if ch in channel_data and 'delta_t' in channel_data[ch]:
-                dt_data = channel_data[ch]['delta_t']
-                if dt_data.size > 0:
-                    counts, _ = np.histogram(dt_data, bins=delta_t_bins)
-                    total_events = len(dt_data)
-                    
-                    ax.step(delta_t_bins, np.append(counts, counts[-1]), where='post', 
-                           color='navy', label=f"N = {total_events:.0f}")
+            if ch in channel_counts and 'delta_t' in channel_counts[ch]:
+                counts = np.asarray(channel_counts[ch]['delta_t'], dtype=float)
+                raw_candidate_count = int(np.sum(counts))
+                if raw_candidate_count > 0:
+
+                    legend_label = (
+                        f"BRN candidates: {raw_candidate_count:,}\n"
+                        f"Beam-on triggers: {beam_on_total:,}"
+                    )
+
+                    ax.step(
+                        delta_t_bins,
+                        np.append(counts, counts[-1]),
+                        where='post',
+                        color='navy',
+                        linewidth=1.8,
+                        label=legend_label
+                    )
                     
                     brn_delta_t_data[ch] = {'counts': counts, 'edges': delta_t_bins}
-                    ax.set_title(f'SiPM Channel {ch}')
-                    ax.set_xlabel('Delta_t (ns)')
-                    ax.set_ylabel('Events')
-                    ax.grid(True, which='both', linestyle=':')
-                    # ax.set_yscale('log')
-                    ax.set_xlim(delta_t_range)
-                    ax.legend()
+                    ax.set_title(f'SiPM Channel {ch}', fontsize=12.5, pad=8)
+                    _style_brn_axis(ax, '$\\Delta t$ (ns)', 'Events', delta_t_range)
+                    ax.legend(loc='upper right', fontsize=8.5, frameon=True, framealpha=0.95, edgecolor='0.35')
                 else:
                     ax.text(0.5, 0.5, f'Channel {ch}\nNo Events', 
                            ha='center', va='center', transform=ax.transAxes)
@@ -2283,41 +2748,51 @@ class MasterAggregator:
         for i in range(len(brn_channels), len(axes_dt)):
             axes_dt[i].set_axis_off()
         
-        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.tight_layout(rect=[0.02, 0.03, 1, 0.95])
         
         dt_img_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_brn_delta_t_master.png'
         dt_pkl_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_brn_delta_t_master.pkl'
-        plt.savefig(dt_img_path)
+        plt.savefig(dt_img_path, dpi=int(brn_dt_cfg.get('dpi', 300)), bbox_inches='tight')
         self.file_handler.save_pickle(brn_delta_t_data, dt_pkl_path)
         print(f"BRN Delta_t histograms saved to {dt_img_path}")
         plt.close(fig_dt)
         
         # --- Plot Area Histograms ---
-        fig_area, axes_area = plt.subplots(3, 4, figsize=(20, 15))
-        fig_area.suptitle(f'BRN Area Distribution - {self.agg_label} ({self.m1_or_m2})', fontsize=16)
+        fig_area, axes_area = plt.subplots(3, 4, figsize=tuple(brn_area_cfg.get('figure_size', (18, 12))), sharex=True)
+        fig_area.suptitle(
+            f'Beam-Related Neutron Candidate Charge by SiPM Channel\n{self.agg_label} ({self.m1_or_m2})',
+            fontsize=17,
+            fontweight='bold'
+        )
         axes_area = axes_area.flatten()
         
         brn_area_data = {}
         
         for i, ch in enumerate(brn_channels):
             ax = axes_area[i]
-            if ch in channel_data and 'area' in channel_data[ch]:
-                area_data = channel_data[ch]['area']
-                if area_data.size > 0:
-                    counts, _ = np.histogram(area_data, bins=area_bin_edges)
-                    total_events = len(area_data)
-                    
-                    ax.step(area_bin_edges, np.append(counts, counts[-1]), where='post', 
-                           color='darkcyan', label=f"N = {total_events:.0f}")
+            if ch in channel_counts and 'area' in channel_counts[ch]:
+                counts = np.asarray(channel_counts[ch]['area'], dtype=float)
+                raw_candidate_count = int(np.sum(np.asarray(channel_counts[ch].get('delta_t', []), dtype=float)))
+                if raw_candidate_count > 0:
+
+                    legend_label = (
+                        f"BRN candidates: {raw_candidate_count:,}\n"
+                        f"Beam-on triggers: {beam_on_total:,}"
+                    )
+
+                    ax.step(
+                        area_bin_edges,
+                        np.append(counts, counts[-1]),
+                        where='post',
+                        color='darkcyan',
+                        linewidth=1.8,
+                        label=legend_label
+                    )
                     
                     brn_area_data[ch] = {'counts': counts, 'edges': area_bin_edges}
-                    ax.set_title(f'SiPM Channel {ch}')
-                    ax.set_xlabel('Area (ADC)')
-                    ax.set_ylabel('Events')
-                    ax.grid(True, which='both', linestyle=':')
-                    # ax.set_yscale('log')
-                    ax.set_xlim(area_range)
-                    ax.legend()
+                    ax.set_title(f'SiPM Channel {ch}', fontsize=12.5, pad=8)
+                    _style_brn_axis(ax, 'Area (ADC)', 'Events', area_range)
+                    ax.legend(loc='upper right', fontsize=8.5, frameon=True, framealpha=0.95, edgecolor='0.35')
                 else:
                     ax.text(0.5, 0.5, f'Channel {ch}\nNo Events', 
                            ha='center', va='center', transform=ax.transAxes)
@@ -2331,11 +2806,11 @@ class MasterAggregator:
         for i in range(len(brn_channels), len(axes_area)):
             axes_area[i].set_axis_off()
         
-        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.tight_layout(rect=[0.02, 0.03, 1, 0.95])
         
         area_img_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_brn_area_master.png'
         area_pkl_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_brn_area_master.pkl'
-        plt.savefig(area_img_path)
+        plt.savefig(area_img_path, dpi=int(brn_area_cfg.get('dpi', 300)), bbox_inches='tight')
         self.file_handler.save_pickle(brn_area_data, area_pkl_path)
         print(f"BRN Area histograms saved to {area_img_path}")
         plt.close(fig_area)
@@ -2356,21 +2831,21 @@ class MasterAggregator:
             f.write(f"------------------------\n")
             f.write(f"DATA_DIR_M1: {config.DATA_DIR_M1}\n")
             f.write(f"DATA_DIR_M2: {config.DATA_DIR_M2}\n")
+            f.write(f"TIME_INTERVAL_CUT_NS: {config.TIME_INTERVAL_CUT_NS}\n")
             f.write(f"DELTA_T_CUT: {config.DELTA_T_CUT}\n")
             f.write(f"PE_CUT: {config.PE_CUT}\n")
             f.write(f"TIME_STD_CUT: {config.TIME_STD_CUT}\n")
             f.write(f"MULTIPLICITY_SPE: {config.MULTIPLICITY_SPE}\n")
             f.write(f"MULTIPLICITY_CUT: {config.MULTIPLICITY_CUT}\n")
+            f.write(f"TIME_TICK_NS: {config.TIME_TICK_NS}\n")
             f.write(f"DELTA_T_BIN_WIDTH_NS: {config.DELTA_T_BIN_WIDTH_NS}\n")
-            f.write(f"BINS: {config.BINS}\n")
-            f.write(f"VETO_BINS: {config.VETO_BINS}\n")
-            f.write(f"VETO_RANGE: {config.VETO_RANGE}\n")
             f.write(f"TAU_FIT_WINDOW: {config.TAU_FIT_WINDOW}\n")
             f.write(f"LOW_LIGHT_FIT_RANGE: {config.LOW_LIGHT_FIT_RANGE}\n")
             f.write(f"HIGHLIGHT_FIT_CONFIG: {getattr(config, 'HIGHLIGHT_FIT_CONFIG', {})}\n")
             f.write(f"SIPM_HIST_CONFIG: {config.SIPM_HIST_CONFIG}\n")
             f.write(f"PERFORM_THIN_VETO_ANALYSIS: {config.PERFORM_THIN_VETO_ANALYSIS}\n")
             f.write(f"PERFORM_BRN_ANALYSIS: {config.PERFORM_BRN_ANALYSIS}\n")
+            f.write(f"MASTER_PLOT_CONFIG: {getattr(config, 'MASTER_PLOT_CONFIG', {})}\n")
             
             f.write(f"\nSub-job Directories Processed:\n")
             for d in self.subjob_dirs:

@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../../../../raid1/genli"
+		},
+		{
+			"path": "../../g4d2o-topcylindricaldet"
 		}
 	],
 	"settings": {}
