@@ -24,7 +24,7 @@ SUFFIX_M1_CANDIDATES = ["_processed_v5.root", "_processed_v4.root"]
 suffix_M2 = "_processed_H2O_v5.root"
 
 # --- Global Analysis Cuts ---
-TIME_INTERVAL_CUT_NS = 1000  # Pile-up cut in ns
+TIME_INTERVAL_CUT_NS = 512  # Pile-up cut in ns
 muon_life = 2197  # Muon lifetime in ns
 DELTA_T_CUT = (2400, 32000)      # (min_ns, max_ns), min_ns, max_ns should be n*DELTA_T_BIN_WIDTH_NS
 # DELTA_T_CUT = (8*muon_life, 100*muon_life)      # (min_ns, max_ns)
@@ -45,10 +45,14 @@ THIN_VETO_CHANNELS = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21]  # thin-veto panel
 THIN_VETO_THRESHOLD = 30.0
 
 PERFORM_BRN_ANALYSIS = True
-BRN_DELTA_T_RANGE = (1000, 5000)   # (ns) candidate timing window relative to previous beam-on
+BRN_DELTA_T_RANGE = (832, 4992)   # (ns) candidate timing window aligned to TIME_TICK_NS and BRN_DELTA_T_BIN_WIDTH_NS
 BRN_DELTA_T_BIN_WIDTH_NS = 64   # Δt bin width for BRN plots, must be multiple of TIME_TICK_NS
 BRN_SIPM_THRESHOLD_ADC = 30.0   # PulseH threshold for a SiPM channel to be "triggered"
 BRN_SIPM_CHANNELS = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21]  # BRN channel selection
+ENABLE_EVENT61_SYNTHETIC_BIT = True  # BRN-only synthetic Event61 preprocessing toggle
+EVENT61_CHANNEL_INDEX = 22
+EVENT61_ADC_RANGE = (20.0, 40.0)
+EVENT61_THRESHOLD_ADC = EVENT61_ADC_RANGE[0]  # Legacy lower-edge alias; the trigger uses the full EVENT61_ADC_RANGE window.
 
 # --- Per-Run / Analysis Plot Settings ---
 RUN_PLOT_CONFIG = {
@@ -63,7 +67,7 @@ RUN_PLOT_CONFIG = {
     },
     'sipm_area_hist': {
         'hist_bins': 100,
-        'hist_range': (-50, 4000),
+        'hist_range': (-50, 2000),
     },
 }
 
@@ -106,6 +110,18 @@ HIGHLIGHT_FIT_CONFIG = {
     'min_fit_points': 6,
 }
 
+EVENT61_FIT_CONFIG = {
+    'enabled': True,
+    'bins': 200,
+    'hist_range': (0, 200),
+    'fit_range': (20, 40),
+    'signal_range': (20, 40),
+    'min_fit_points': 6,
+    'figure_size': (10, 6),
+    'dpi': 300,
+    'logscale': False,
+}
+
 # --- Master Aggregate Fit Settings ---
 DO_TAU_FIT = True
 TAU_FIT_WINDOW = (DELTA_T_CUT[0] + DELTA_T_BIN_WIDTH_NS, 10000)  # (start_ns, end_ns) for lifetime fit
@@ -135,7 +151,9 @@ THIN_VETO_HIST_CONFIG = {
 # --- BRN Analysis Plot Settings ---
 BRN_HIST_CONFIG = {
     'area_bins': 100,
-    'area_range': (-50, 4000),
+    'area_range': (-50, 2000),
+    'heatmap_cmap': 'viridis',
+    'heatmap_logscale': True,
 }
 
 # --- Master Aggregate Plot Settings ---
@@ -208,6 +226,26 @@ MASTER_PLOT_CONFIG = {
         'legend_ncol': 3,
         'dpi': 300,
     },
+    'event61_hist': {
+        'hist_range': EVENT61_FIT_CONFIG['hist_range'],
+        'fit_range': EVENT61_FIT_CONFIG['fit_range'],
+        'signal_range': EVENT61_FIT_CONFIG['signal_range'],
+        'figure_size': EVENT61_FIT_CONFIG['figure_size'],
+        'dpi': EVENT61_FIT_CONFIG['dpi'],
+        'logscale': True,
+    },
+    'event61_mean_evolution': {
+        'figure_size': (12, 6),
+        'dpi': 300,
+    },
+    'event61_sigma_evolution': {
+        'figure_size': (12, 6),
+        'dpi': 300,
+    },
+    'event61_signal_evolution': {
+        'figure_size': (12, 6),
+        'dpi': 300,
+    },
     'sipm_area_hist': {
         'hist_bins': RUN_PLOT_CONFIG['sipm_area_hist']['hist_bins'],
         'hist_range': RUN_PLOT_CONFIG['sipm_area_hist']['hist_range'],
@@ -236,6 +274,15 @@ MASTER_PLOT_CONFIG = {
         'bins': BRN_HIST_CONFIG['area_bins'],
         'figure_size': (18, 12),
         'dpi': 300,
+    },
+    'brn_delta_t_area': {
+        'channels': BRN_SIPM_CHANNELS,
+        'delta_t_range': BRN_DELTA_T_RANGE,
+        'area_range': BRN_HIST_CONFIG['area_range'],
+        'figure_size': (18, 12),
+        'dpi': 300,
+        'cmap': BRN_HIST_CONFIG['heatmap_cmap'],
+        'logscale': BRN_HIST_CONFIG['heatmap_logscale'],
     },
 }
 

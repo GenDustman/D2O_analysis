@@ -12,6 +12,7 @@ import pandas as pd
 import pickle
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.colors import Normalize, SymLogNorm
 from scipy.optimize import curve_fit
 import json
 from datetime import datetime
@@ -36,7 +37,9 @@ from Read_Cut_Hist_D2O_multi_veto import (
     FileHandler,
     HistogramCalculator,
     DataProcessor,
-    Plotter
+    Plotter,
+    get_event61_fit_config,
+    plot_event61_histogram_payload,
 )
 
 class DataAggregator:
@@ -1093,6 +1096,23 @@ class MasterAggregator:
 
         return rebinned
 
+    @staticmethod
+    def _normalize_brn_delta_t_edges(source_edges, target_edges):
+        """Normalize legacy BRN dt edges that overshoot the configured upper bound by one final bin edge."""
+        source_edges = np.asarray(source_edges, dtype=float)
+        target_edges = np.asarray(target_edges, dtype=float)
+
+        if source_edges.shape == target_edges.shape and np.allclose(source_edges, target_edges):
+            return source_edges
+
+        if source_edges.shape == target_edges.shape and source_edges.size >= 2:
+            if np.allclose(source_edges[:-1], target_edges[:-1]) and source_edges[-1] > target_edges[-1]:
+                normalized = source_edges.copy()
+                normalized[-1] = target_edges[-1]
+                return normalized
+
+        return source_edges
+
     def _initialize_data_containers(self):
         """Initialize all data container variables."""
         main_dt_cfg = get_master_plot_config('main_delta_t', {
@@ -1116,6 +1136,11 @@ class MasterAggregator:
         )
         self.master_pe_counts = np.zeros(len(self.main_pe_bin_edges) - 1, dtype=float)
         self.main_data_found = False
+
+        event61_cfg = get_event61_fit_config()
+        self.event61_bin_edges = np.linspace(*event61_cfg['hist_range'], event61_cfg['bins'] + 1)
+        self.master_event61_hist_counts = np.zeros(len(self.event61_bin_edges) - 1, dtype=float)
+        self.event61_data_found = False
 
         sipm_master_cfg = get_master_plot_config('sipm_area_hist', {
             'hist_bins': config.SIPM_HIST_CONFIG['hist_bins'],
@@ -1194,6 +1219,7 @@ class MasterAggregator:
             ch: {
                 'delta_t': np.zeros(len(self.brn_delta_t_edges) - 1, dtype=float),
                 'area': np.zeros(len(self.brn_area_edges) - 1, dtype=float),
+                'delta_t_area': np.zeros((len(self.brn_delta_t_edges) - 1, len(self.brn_area_edges) - 1), dtype=float),
             }
             for ch in brn_channels
         }
@@ -1204,6 +1230,10 @@ class MasterAggregator:
         self.total_timelength_s = 0.0
         self.total_timelength_min = 0.0
         self.total_beam_on_count = 0
+        self.total_brn_beam_on_count = 0
+        self.event61_applied_run_count = 0
+        self.event61_adc_ranges = set()
+        self.event61_channel_indices = set()
 
         # Run-level veto summary data
         self.run_veto_summaries = []
@@ -1214,6 +1244,7 @@ class MasterAggregator:
             print(f"Processing {sub_dir.name}...")
             
             self._load_main_arrays(sub_dir)
+            self._load_event61_data(sub_dir)
             self._load_sipm_data(sub_dir)
             self._load_veto_data(sub_dir)
             self._load_run_level_veto_data(sub_dir)
@@ -1265,6 +1296,27 @@ class MasterAggregator:
             if raw_pe is not None and raw_pe.size > 0:
                 self.master_pe_counts += np.histogram(raw_pe, bins=self.main_pe_bin_edges)[0]
                 self.main_data_found = True
+
+    def _load_event61_data(self, sub_dir):
+        """Load Event61 histogram payloads from subjobs."""
+        event61_hist_file = sub_dir / 'aggregated_event61_hist.pkl'
+        if not event61_hist_file.exists():
+            return
+
+        try:
+            with open(event61_hist_file, 'rb') as f:
+                event61_payload = pickle.load(f)
+            event61_edges = np.asarray(event61_payload.get('edges', []), dtype=float)
+            event61_counts = np.asarray(event61_payload.get('counts', []), dtype=float)
+            if event61_edges.shape != self.event61_bin_edges.shape or not np.allclose(event61_edges, self.event61_bin_edges):
+                print(f"  Warning: Event61 histogram edge mismatch in {sub_dir.name}; skipping histogram payload.")
+                return
+
+            self.master_event61_hist_counts += event61_counts
+            if np.any(event61_counts):
+                self.event61_data_found = True
+        except Exception as e:
+            print(f"  Warning: Could not load Event61 histogram payload for {sub_dir.name}. Error: {e}")
 
     def _load_sipm_data(self, sub_dir):
         """Load SiPM histogram payloads, falling back to old raw area arrays if needed."""
@@ -1419,6 +1471,39 @@ class MasterAggregator:
                 except (TypeError, ValueError):
                     beam_on_count_val = self._load_beam_on_count_from_run_pickle(run_dir)
 
+                brn_beam_on_count = info.get('brn_beam_on_count', beam_on_count_val)
+                try:
+                    brn_beam_on_count_val = int(brn_beam_on_count)
+                except (TypeError, ValueError):
+                    brn_beam_on_count_val = beam_on_count_val
+
+                event61_adjustment_applied = bool(info.get('event61_adjustment_applied', False))
+                event61_adc_range_raw = info.get('event61_adc_range')
+                event61_adc_min = np.nan
+                event61_adc_max = np.nan
+                if isinstance(event61_adc_range_raw, (list, tuple)) and len(event61_adc_range_raw) == 2:
+                    try:
+                        event61_adc_min = float(event61_adc_range_raw[0])
+                    except (TypeError, ValueError):
+                        event61_adc_min = np.nan
+                    try:
+                        event61_adc_max = float(event61_adc_range_raw[1]) if event61_adc_range_raw[1] is not None else np.nan
+                    except (TypeError, ValueError):
+                        event61_adc_max = np.nan
+                else:
+                    try:
+                        event61_adc_min = float(info.get('event61_threshold_adc', np.nan))
+                    except (TypeError, ValueError):
+                        event61_adc_min = np.nan
+                try:
+                    event61_channel_index = int(info.get('event61_channel_index', -1))
+                except (TypeError, ValueError):
+                    event61_channel_index = -1
+                try:
+                    event61_count = int(info.get('event61_count', 0))
+                except (TypeError, ValueError):
+                    event61_count = 0
+                event61_channel_available = bool(info.get('event61_channel_available', False))
                 mu1_values = np.asarray(info.get('mu1_values', [np.nan] * 12), dtype=float)
                 if mu1_values.size != 12:
                     mu1_values = np.full(12, np.nan)
@@ -1457,6 +1542,68 @@ class MasterAggregator:
                 except (TypeError, ValueError):
                     michel_sigma_err_val = np.nan
 
+                try:
+                    event61_hist_total_entries = int(info.get('event61_hist_total_entries', 0))
+                except (TypeError, ValueError):
+                    event61_hist_total_entries = 0
+                event61_fit_success = bool(info.get('event61_fit_success', False))
+                try:
+                    event61_fit_mean_adc = float(info.get('event61_fit_mean_adc', np.nan))
+                except (TypeError, ValueError):
+                    event61_fit_mean_adc = np.nan
+                try:
+                    event61_fit_mean_adc_err = float(info.get('event61_fit_mean_adc_err', np.nan))
+                except (TypeError, ValueError):
+                    event61_fit_mean_adc_err = np.nan
+                try:
+                    event61_fit_sigma_adc = float(info.get('event61_fit_sigma_adc', np.nan))
+                except (TypeError, ValueError):
+                    event61_fit_sigma_adc = np.nan
+                try:
+                    event61_fit_sigma_adc_err = float(info.get('event61_fit_sigma_adc_err', np.nan))
+                except (TypeError, ValueError):
+                    event61_fit_sigma_adc_err = np.nan
+                try:
+                    event61_fit_constant = float(info.get('event61_fit_constant', np.nan))
+                except (TypeError, ValueError):
+                    event61_fit_constant = np.nan
+                try:
+                    event61_fit_constant_err = float(info.get('event61_fit_constant_err', np.nan))
+                except (TypeError, ValueError):
+                    event61_fit_constant_err = np.nan
+                try:
+                    event61_fit_reduced_chi2 = float(info.get('event61_fit_reduced_chi2', np.nan))
+                except (TypeError, ValueError):
+                    event61_fit_reduced_chi2 = np.nan
+                try:
+                    event61_raw_window_count = float(info.get('event61_raw_window_count', np.nan))
+                except (TypeError, ValueError):
+                    event61_raw_window_count = np.nan
+                try:
+                    event61_background_window_count = float(
+                        info.get('event61_background_window_count', info.get('event61_pedestal_window_count', np.nan))
+                    )
+                except (TypeError, ValueError):
+                    event61_background_window_count = np.nan
+                try:
+                    event61_background_window_count_err = float(
+                        info.get('event61_background_window_count_err', info.get('event61_pedestal_window_count_err', np.nan))
+                    )
+                except (TypeError, ValueError):
+                    event61_background_window_count_err = np.nan
+                try:
+                    event61_background_subtracted_count = float(
+                        info.get('event61_background_subtracted_count', info.get('event61_pedestal_subtracted_count', np.nan))
+                    )
+                except (TypeError, ValueError):
+                    event61_background_subtracted_count = np.nan
+                try:
+                    event61_background_subtracted_count_err = float(
+                        info.get('event61_background_subtracted_count_err', info.get('event61_pedestal_subtracted_count_err', np.nan))
+                    )
+                except (TypeError, ValueError):
+                    event61_background_subtracted_count_err = np.nan
+
                 if run_number is None:
                     continue
 
@@ -1466,6 +1613,7 @@ class MasterAggregator:
                     'run_start_time': run_start_str,
                     'run_datetime': run_dt,
                     'beam_on_count': beam_on_count_val,
+                    'brn_beam_on_count': brn_beam_on_count_val,
                     'average_efficiency': avg_eff_val if np.isfinite(avg_eff_val) else np.nan,
                     'average_efficiency_error': avg_err_val if np.isfinite(avg_err_val) else np.nan,
                     'valid_bin_count': int(info.get('valid_bin_count', 0)),
@@ -1480,8 +1628,40 @@ class MasterAggregator:
                     'michel_peak_pe_err': michel_peak_err_val if np.isfinite(michel_peak_err_val) else np.nan,
                     'michel_sigma_pe': michel_sigma_val if np.isfinite(michel_sigma_val) else np.nan,
                     'michel_sigma_pe_err': michel_sigma_err_val if np.isfinite(michel_sigma_err_val) else np.nan,
+                    'event61_adjustment_applied': event61_adjustment_applied,
+                    'event61_adc_min': event61_adc_min if np.isfinite(event61_adc_min) else np.nan,
+                    'event61_adc_max': event61_adc_max if np.isfinite(event61_adc_max) else np.nan,
+                    'event61_threshold_adc': event61_adc_min if np.isfinite(event61_adc_min) else np.nan,
+                    'event61_channel_index': event61_channel_index if event61_channel_index >= 0 else np.nan,
+                    'event61_count': event61_count,
+                    'event61_channel_available': event61_channel_available,
+                    'event61_hist_total_entries': event61_hist_total_entries,
+                    'event61_fit_success': event61_fit_success,
+                    'event61_fit_mean_adc': event61_fit_mean_adc if np.isfinite(event61_fit_mean_adc) else np.nan,
+                    'event61_fit_mean_adc_err': event61_fit_mean_adc_err if np.isfinite(event61_fit_mean_adc_err) else np.nan,
+                    'event61_fit_sigma_adc': event61_fit_sigma_adc if np.isfinite(event61_fit_sigma_adc) else np.nan,
+                    'event61_fit_sigma_adc_err': event61_fit_sigma_adc_err if np.isfinite(event61_fit_sigma_adc_err) else np.nan,
+                    'event61_fit_constant': event61_fit_constant if np.isfinite(event61_fit_constant) else np.nan,
+                    'event61_fit_constant_err': event61_fit_constant_err if np.isfinite(event61_fit_constant_err) else np.nan,
+                    'event61_fit_reduced_chi2': event61_fit_reduced_chi2 if np.isfinite(event61_fit_reduced_chi2) else np.nan,
+                    'event61_raw_window_count': event61_raw_window_count if np.isfinite(event61_raw_window_count) else np.nan,
+                    'event61_background_window_count': event61_background_window_count if np.isfinite(event61_background_window_count) else np.nan,
+                    'event61_background_window_count_err': event61_background_window_count_err if np.isfinite(event61_background_window_count_err) else np.nan,
+                    'event61_background_subtracted_count': event61_background_subtracted_count if np.isfinite(event61_background_subtracted_count) else np.nan,
+                    'event61_background_subtracted_count_err': event61_background_subtracted_count_err if np.isfinite(event61_background_subtracted_count_err) else np.nan,
                 })
                 self.total_beam_on_count += beam_on_count_val
+                self.total_brn_beam_on_count += brn_beam_on_count_val
+                if event61_adjustment_applied:
+                    self.event61_applied_run_count += 1
+                if np.isfinite(event61_adc_min):
+                    range_key = (
+                        float(event61_adc_min),
+                        float(event61_adc_max) if np.isfinite(event61_adc_max) else None,
+                    )
+                    self.event61_adc_ranges.add(range_key)
+                if event61_channel_index >= 0:
+                    self.event61_channel_indices.add(int(event61_channel_index))
             except Exception as e:
                 print(f"  Warning: Could not read run-level veto summary from {summary_file}. Error: {e}")
 
@@ -1579,18 +1759,20 @@ class MasterAggregator:
                 with open(brn_hist_file, 'rb') as f:
                     brn_payload = pickle.load(f)
                 dt_edges = np.asarray(brn_payload.get('delta_t_edges', []), dtype=float)
+                dt_edges = self._normalize_brn_delta_t_edges(dt_edges, self.brn_delta_t_edges)
                 area_edges = np.asarray(brn_payload.get('area_edges', []), dtype=float)
                 if area_edges.shape != self.brn_area_edges.shape or not np.allclose(area_edges, self.brn_area_edges):
                     print(f"  Warning: BRN area edge mismatch in {sub_dir.name}; skipping histogram payload.")
                     return
 
-                self.brn_data_found = True
+                loaded_any_counts = False
                 for ch, counts in brn_payload.get('counts', {}).items():
                     ch = int(ch)
                     if ch not in self.master_brn_hist_counts:
                         self.master_brn_hist_counts[ch] = {
                             'delta_t': np.zeros(len(self.brn_delta_t_edges) - 1, dtype=float),
                             'area': np.zeros(len(self.brn_area_edges) - 1, dtype=float),
+                            'delta_t_area': np.zeros((len(self.brn_delta_t_edges) - 1, len(self.brn_area_edges) - 1), dtype=float),
                         }
                     rebinned_dt_counts = self._rebin_histogram_counts(
                         counts.get('delta_t', 0),
@@ -1598,8 +1780,20 @@ class MasterAggregator:
                         self.brn_delta_t_edges,
                         f"BRN delta_t for {sub_dir.name} channel {ch}"
                     )
+                    heatmap_counts = np.asarray(counts.get('delta_t_area', []), dtype=float)
+                    expected_heatmap_shape = (len(self.brn_delta_t_edges) - 1, len(self.brn_area_edges) - 1)
+                    if heatmap_counts.size == 0:
+                        heatmap_counts = np.zeros(expected_heatmap_shape, dtype=float)
+                    elif heatmap_counts.shape != expected_heatmap_shape:
+                        print(f"  Warning: BRN delta_t-area heatmap shape mismatch in {sub_dir.name} channel {ch}; skipping 2D payload.")
+                        heatmap_counts = np.zeros(expected_heatmap_shape, dtype=float)
                     self.master_brn_hist_counts[ch]['delta_t'] += rebinned_dt_counts
                     self.master_brn_hist_counts[ch]['area'] += np.asarray(counts.get('area', 0), dtype=float)
+                    self.master_brn_hist_counts[ch]['delta_t_area'] += heatmap_counts
+                    if np.any(rebinned_dt_counts) or np.any(np.asarray(counts.get('area', 0), dtype=float)) or np.any(heatmap_counts):
+                        loaded_any_counts = True
+                if loaded_any_counts:
+                    self.brn_data_found = True
             except Exception as e:
                 print(f"Warning: Could not load BRN histogram payload from {sub_dir.name}. Error: {e}")
         else:
@@ -1615,9 +1809,18 @@ class MasterAggregator:
                             self.master_brn_hist_counts[ch] = {
                                 'delta_t': np.zeros(len(self.brn_delta_t_edges) - 1, dtype=float),
                                 'area': np.zeros(len(self.brn_area_edges) - 1, dtype=float),
+                                'delta_t_area': np.zeros((len(self.brn_delta_t_edges) - 1, len(self.brn_area_edges) - 1), dtype=float),
                             }
-                        self.master_brn_hist_counts[ch]['delta_t'] += np.histogram(np.asarray(data.get('delta_t', []), dtype=float), bins=self.brn_delta_t_edges)[0]
-                        self.master_brn_hist_counts[ch]['area'] += np.histogram(np.asarray(data.get('area', []), dtype=float), bins=self.brn_area_edges)[0]
+                        dt_values = np.asarray(data.get('delta_t', []), dtype=float)
+                        area_values = np.asarray(data.get('area', []), dtype=float)
+                        self.master_brn_hist_counts[ch]['delta_t'] += np.histogram(dt_values, bins=self.brn_delta_t_edges)[0]
+                        self.master_brn_hist_counts[ch]['area'] += np.histogram(area_values, bins=self.brn_area_edges)[0]
+                        if dt_values.size > 0 and dt_values.size == area_values.size:
+                            self.master_brn_hist_counts[ch]['delta_t_area'] += np.histogram2d(
+                                dt_values,
+                                area_values,
+                                bins=[self.brn_delta_t_edges, self.brn_area_edges],
+                            )[0]
                 except Exception as e:
                     print(f"Warning: Could not load BRN data from {sub_dir.name}. Error: {e}")
 
@@ -1668,9 +1871,11 @@ class MasterAggregator:
     def _generate_master_plots(self):
         """Uses the populated master containers to generate all plots."""
         self._generate_main_plots()
+        self._generate_event61_plots()
         self._generate_veto_plots()
         self._generate_veto_efficiency_evolution_plot()
         self._generate_beam_on_evolution_plot()
+        self._generate_event61_evolution_plots()
         self._generate_michel_peak_evolution_plot()
         self._generate_mu1_evolution_plot()
         self._generate_low_light_plots()
@@ -1750,6 +1955,147 @@ class MasterAggregator:
                 dt_plot_cfg,
                 pe_plot_cfg,
             )
+
+    def _generate_event61_plots(self):
+        """Generate the master Event61 histogram and fit plot."""
+        if not self.event61_data_found and np.sum(self.master_event61_hist_counts) <= 0:
+            print("No Event61 histogram data found to plot.")
+            return
+
+        print("Aggregating Event61 pulseH histogram data...")
+        plot_cfg = get_master_plot_config('event61_hist', get_event61_fit_config())
+        hist_payload = {
+            'counts': self.master_event61_hist_counts,
+            'edges': self.event61_bin_edges,
+            'channel_index': int(getattr(config, 'EVENT61_CHANNEL_INDEX', 22)),
+            'channel_available': True,
+            'n_entries': int(np.sum(self.master_event61_hist_counts)),
+        }
+        plot_event61_histogram_payload(
+            hist_payload,
+            self.master_output_dir,
+            self.agg_label,
+            self.m1_or_m2,
+            fit_config=plot_cfg,
+            filename_suffix='event61_pulseh_fit_master',
+            title_prefix='Event61 pulseH Master',
+        )
+
+    def _generate_event61_evolution_plot(self, value_key, error_key, ylabel, title_suffix,
+                                         filename_suffix, plot_section, color, ecolor,
+                                         scale_factor=1.0):
+        """Generate one Event61 evolution plot from run-level fit summaries."""
+        if not self.run_veto_summaries:
+            print(f"No per-run summary data found for {title_suffix.lower()} evolution plot.")
+            return
+
+        run_df = pd.DataFrame(self.run_veto_summaries)
+        if value_key not in run_df.columns:
+            print(f"No {value_key} values found in run summaries.")
+            return
+
+        run_df[value_key] = pd.to_numeric(run_df[value_key], errors='coerce')
+        run_df = run_df.dropna(subset=[value_key])
+        if run_df.empty:
+            print(f"Run summaries present, but no valid {value_key} values were found.")
+            return
+
+        run_df, x, x_label, use_dates = self._prepare_evolution_x(run_df)
+        plot_cfg = get_master_plot_config(plot_section, {
+            'figure_size': (12, 6),
+            'dpi': 300,
+        })
+        y = run_df[value_key].to_numpy(dtype=float)
+        if error_key and error_key in run_df.columns:
+            yerr_raw = pd.to_numeric(run_df[error_key], errors='coerce').to_numpy(dtype=float)
+        else:
+            yerr_raw = np.full_like(y, np.nan)
+        scale_factor = float(scale_factor) if np.isfinite(scale_factor) and scale_factor != 0.0 else 1.0
+        y = y / scale_factor
+        yerr_raw = yerr_raw / scale_factor
+        yerr_plot = np.where(np.isfinite(yerr_raw), yerr_raw, 0.0)
+
+        plt.figure(figsize=tuple(plot_cfg.get('figure_size', (12, 6))))
+        plt.errorbar(
+            x,
+            y,
+            yerr=yerr_plot,
+            fmt='o-',
+            markersize=4,
+            linewidth=1,
+            capsize=2,
+            color=color,
+            ecolor=ecolor,
+            label=title_suffix,
+        )
+        plt.ylabel(ylabel)
+        plt.xlabel(x_label)
+        plt.title(f'{title_suffix} Evolution by Run ({self.agg_label}, {self.m1_or_m2})')
+        plt.grid(True, which='major', linestyle='-', linewidth=0.7)
+        plt.grid(True, which='minor', linestyle=':', linewidth=0.5)
+        plt.minorticks_on()
+        ax = plt.gca()
+        self._format_evolution_xaxis(ax, run_df, use_dates)
+        plt.legend()
+        plt.tight_layout()
+
+        img_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_{filename_suffix}.png'
+        pkl_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_{filename_suffix}.pkl'
+        csv_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_{filename_suffix}.csv'
+        plt.savefig(img_path, dpi=int(plot_cfg.get('dpi', 300)))
+        plt.close()
+
+        out_df = run_df[['run', 'run_dir', 'run_start_time']].copy()
+        out_df[value_key] = y
+        out_df[error_key] = yerr_raw
+        out_df['event61_fit_success'] = run_df['event61_fit_success'].astype(bool) if 'event61_fit_success' in run_df.columns else False
+        if 'event61_hist_total_entries' in run_df.columns:
+            out_df['event61_hist_total_entries'] = pd.to_numeric(run_df['event61_hist_total_entries'], errors='coerce').to_numpy(dtype=float)
+        else:
+            out_df['event61_hist_total_entries'] = np.zeros(len(run_df), dtype=float)
+        if use_dates:
+            out_df['run_datetime'] = pd.to_datetime(run_df['run_datetime']).dt.strftime('%Y-%m-%d %H:00')
+        else:
+            out_df['run_datetime'] = pd.NA
+
+        with open(pkl_path, 'wb') as f:
+            pickle.dump({'plot_data': out_df.to_dict(orient='list')}, f)
+        out_df.to_csv(csv_path, index=False)
+        print(f"{title_suffix} evolution plot saved to {img_path}")
+
+    def _generate_event61_evolution_plots(self):
+        """Generate run-by-run Event61 fit-result evolution plots."""
+        self._generate_event61_evolution_plot(
+            'event61_fit_mean_adc',
+            'event61_fit_mean_adc_err',
+            'Event61 Fit Mean (ADC)',
+            'Event61 Fit Mean',
+            'event61_mean_evolution',
+            'event61_mean_evolution',
+            'darkorange',
+            'sandybrown',
+        )
+        self._generate_event61_evolution_plot(
+            'event61_fit_sigma_adc',
+            'event61_fit_sigma_adc_err',
+            'Event61 Fit Sigma (ADC)',
+            'Event61 Fit Sigma',
+            'event61_sigma_evolution',
+            'event61_sigma_evolution',
+            'teal',
+            'lightseagreen',
+        )
+        self._generate_event61_evolution_plot(
+            'event61_background_subtracted_count',
+            'event61_background_subtracted_count_err',
+            r'$\bar{f}_{\mathrm{sub}}$ (Hz)',
+            'Event61 Signal Yield',
+            'event61_signal_evolution',
+            'event61_signal_evolution',
+            'purple',
+            'plum',
+            scale_factor=3600.0,
+        )
 
     def _generate_veto_plots(self):
         """Generate veto efficiency plots."""
@@ -1869,12 +2215,13 @@ class MasterAggregator:
             return
 
         run_df = pd.DataFrame(self.run_veto_summaries)
-        if 'beam_on_count' not in run_df.columns:
+        count_column = 'brn_beam_on_count' if 'brn_beam_on_count' in run_df.columns else 'beam_on_count'
+        if count_column not in run_df.columns:
             print("No beam-on counts found in run summaries.")
             return
 
-        run_df['beam_on_count'] = pd.to_numeric(run_df['beam_on_count'], errors='coerce')
-        run_df = run_df.dropna(subset=['beam_on_count'])
+        run_df[count_column] = pd.to_numeric(run_df[count_column], errors='coerce')
+        run_df = run_df.dropna(subset=[count_column])
         if run_df.empty:
             print("Run-level summaries are present, but no valid beam-on counts were found.")
             return
@@ -1885,15 +2232,21 @@ class MasterAggregator:
             'dpi': 300,
         })
 
-        y = run_df['beam_on_count'].to_numpy(dtype=float)
+        y = run_df[count_column].to_numpy(dtype=float)
         mean_y = float(np.mean(y)) if y.size > 0 else np.nan
         median_y = float(np.median(y)) if y.size > 0 else np.nan
+
+        plot_label = 'Beam-on count per run'
+        plot_title = f'Beam-on Count Evolution by Run ({self.agg_label}, {self.m1_or_m2})'
+        if count_column == 'brn_beam_on_count':
+            plot_label = 'Event61 beam-on count per run'
+            plot_title = f'Event61 Beam-on Count Evolution by Run ({self.agg_label}, {self.m1_or_m2})'
 
         plt.figure(figsize=tuple(plot_cfg.get('figure_size', (12, 6))))
         plt.plot(
             x, y,
             'o-', markersize=4, linewidth=1,
-            color='darkgreen', label='Beam-on count per run'
+            color='darkgreen', label=plot_label
         )
         if np.isfinite(mean_y):
             plt.axhline(mean_y, color='darkred', linestyle='--', linewidth=1.2,
@@ -1904,7 +2257,7 @@ class MasterAggregator:
 
         plt.ylabel('Beam-on Count per Run')
         plt.xlabel(x_label)
-        plt.title(f'Beam-on Count Evolution by Run ({self.agg_label}, {self.m1_or_m2})')
+        plt.title(plot_title)
         plt.grid(True, which='major', linestyle='-', linewidth=0.7)
         plt.grid(True, which='minor', linestyle=':', linewidth=0.5)
         plt.minorticks_on()
@@ -1922,7 +2275,7 @@ class MasterAggregator:
         plt.savefig(img_path, dpi=int(plot_cfg.get('dpi', 300)))
         plt.close()
 
-        out_df = run_df[['run', 'run_dir', 'run_start_time', 'beam_on_count']].copy()
+        out_df = run_df[['run', 'run_dir', 'run_start_time', count_column]].copy()
         if use_dates:
             out_df['run_datetime'] = pd.to_datetime(run_df['run_datetime']).dt.strftime('%Y-%m-%d %H:00')
         else:
@@ -1932,6 +2285,7 @@ class MasterAggregator:
             pickle.dump({
                 'run_summaries': self.run_veto_summaries,
                 'plot_data': out_df.to_dict(orient='list'),
+                'count_field': count_column,
                 'mean_beam_on_count': mean_y,
                 'median_beam_on_count': median_y,
             }, f)
@@ -2679,10 +3033,19 @@ class MasterAggregator:
             'figure_size': (18, 12),
             'dpi': 300,
         })
+        brn_heatmap_cfg = get_master_plot_config('brn_delta_t_area', {
+            'channels': config.BRN_SIPM_CHANNELS,
+            'delta_t_range': config.BRN_DELTA_T_RANGE,
+            'area_range': config.BRN_HIST_CONFIG['area_range'],
+            'figure_size': (18, 12),
+            'dpi': 300,
+            'cmap': (getattr(config, 'BRN_HIST_CONFIG', {}) or {}).get('heatmap_cmap', 'viridis'),
+            'logscale': bool((getattr(config, 'BRN_HIST_CONFIG', {}) or {}).get('heatmap_logscale', True)),
+        })
         brn_channels = list(brn_dt_cfg.get('channels', config.BRN_SIPM_CHANNELS))
         delta_t_range = tuple(brn_dt_cfg.get('range', config.BRN_DELTA_T_RANGE))
         area_range = tuple(brn_area_cfg.get('range', config.BRN_HIST_CONFIG['area_range']))
-        beam_on_total = int(self.total_beam_on_count)
+        beam_on_total = int(self.total_brn_beam_on_count)
         delta_t_bins = np.asarray(channel_data.get('delta_t_edges', self.brn_delta_t_edges), dtype=float)
         area_bin_edges = np.asarray(channel_data.get('area_edges', self.brn_area_edges), dtype=float)
         channel_counts = channel_data.get('counts', {})
@@ -2815,6 +3178,86 @@ class MasterAggregator:
         print(f"BRN Area histograms saved to {area_img_path}")
         plt.close(fig_area)
 
+        # --- Plot Delta_t vs Area Heatmaps ---
+        fig_heatmap, axes_heatmap = plt.subplots(
+            3, 4,
+            figsize=tuple(brn_heatmap_cfg.get('figure_size', (18, 12))),
+            sharex=True,
+            sharey=True,
+        )
+        fig_heatmap.suptitle(
+            f'Beam-Related Neutron Candidate Δt vs Charge by SiPM Channel\n{self.agg_label} ({self.m1_or_m2})',
+            fontsize=17,
+            fontweight='bold'
+        )
+        axes_heatmap = axes_heatmap.flatten()
+
+        heatmap_cmap = brn_heatmap_cfg.get('cmap', 'viridis')
+        heatmap_logscale = bool(brn_heatmap_cfg.get('logscale', True))
+        heatmap_payload = {
+            'delta_t_edges': delta_t_bins,
+            'area_edges': area_bin_edges,
+            'counts': {},
+        }
+        heatmap_artist = None
+        active_axes = []
+        max_heatmap_count = 0.0
+
+        for ch in brn_channels:
+            if ch not in channel_counts or 'delta_t_area' not in channel_counts[ch]:
+                continue
+            counts_2d = np.asarray(channel_counts[ch]['delta_t_area'], dtype=float)
+            if counts_2d.size > 0:
+                max_heatmap_count = max(max_heatmap_count, float(np.max(counts_2d)))
+
+        norm = Normalize(vmin=0.0, vmax=max_heatmap_count if max_heatmap_count > 0 else 1.0)
+        if heatmap_logscale and max_heatmap_count > 1.0:
+            norm = SymLogNorm(linthresh=1.0, linscale=1.0, vmin=0.0, vmax=max_heatmap_count, base=10)
+
+        for i, ch in enumerate(brn_channels):
+            ax = axes_heatmap[i]
+            if ch in channel_counts and 'delta_t_area' in channel_counts[ch]:
+                counts_2d = np.asarray(channel_counts[ch]['delta_t_area'], dtype=float)
+                if counts_2d.size > 0 and np.any(counts_2d > 0):
+                    heatmap_artist = ax.pcolormesh(
+                        delta_t_bins,
+                        area_bin_edges,
+                        counts_2d.T,
+                        shading='auto',
+                        cmap=heatmap_cmap,
+                        norm=norm,
+                    )
+                    heatmap_payload['counts'][ch] = counts_2d
+                    ax.set_title(f'SiPM Channel {ch}', fontsize=12.5, pad=8)
+                    _style_brn_axis(ax, '$\\Delta t$ (ns)', 'Area (ADC)', tuple(brn_heatmap_cfg.get('delta_t_range', delta_t_range)))
+                    ax.set_ylim(tuple(brn_heatmap_cfg.get('area_range', area_range)))
+                    ax.grid(False)
+                    active_axes.append(ax)
+                else:
+                    ax.text(0.5, 0.5, f'Channel {ch}\nNo Events', ha='center', va='center', transform=ax.transAxes)
+                    ax.set_axis_off()
+            else:
+                ax.text(0.5, 0.5, f'Channel {ch}\nNo Data', ha='center', va='center', transform=ax.transAxes)
+                ax.set_axis_off()
+
+        for i in range(len(brn_channels), len(axes_heatmap)):
+            axes_heatmap[i].set_axis_off()
+
+        if heatmap_artist is not None and active_axes:
+            fig_heatmap.subplots_adjust(left=0.06, right=0.90, bottom=0.07, top=0.92, wspace=0.22, hspace=0.28)
+            cax = fig_heatmap.add_axes([0.92, 0.12, 0.018, 0.72])
+            colorbar = fig_heatmap.colorbar(heatmap_artist, cax=cax)
+            colorbar.set_label('Events')
+        else:
+            fig_heatmap.subplots_adjust(left=0.06, right=0.96, bottom=0.07, top=0.92, wspace=0.22, hspace=0.28)
+
+        heatmap_img_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_brn_delta_t_area_master.png'
+        heatmap_pkl_path = self.master_output_dir / f'{self.filename_label}_{self.m1_or_m2}_brn_delta_t_area_master.pkl'
+        plt.savefig(heatmap_img_path, dpi=int(brn_heatmap_cfg.get('dpi', 300)), bbox_inches='tight')
+        self.file_handler.save_pickle(heatmap_payload, heatmap_pkl_path)
+        print(f"BRN Delta_t vs Area heatmaps saved to {heatmap_img_path}")
+        plt.close(fig_heatmap)
+
     def _save_run_info(self):
         """Save configuration and run information to a text file."""
         info_file = self.master_output_dir / "run_info.txt"
@@ -2845,7 +3288,17 @@ class MasterAggregator:
             f.write(f"SIPM_HIST_CONFIG: {config.SIPM_HIST_CONFIG}\n")
             f.write(f"PERFORM_THIN_VETO_ANALYSIS: {config.PERFORM_THIN_VETO_ANALYSIS}\n")
             f.write(f"PERFORM_BRN_ANALYSIS: {config.PERFORM_BRN_ANALYSIS}\n")
+            f.write(f"ENABLE_EVENT61_SYNTHETIC_BIT: {getattr(config, 'ENABLE_EVENT61_SYNTHETIC_BIT', False)}\n")
+            f.write(f"EVENT61_CHANNEL_INDEX: {getattr(config, 'EVENT61_CHANNEL_INDEX', 22)}\n")
+            f.write(f"EVENT61_ADC_RANGE: {getattr(config, 'EVENT61_ADC_RANGE', None)}\n")
+            f.write(f"EVENT61_THRESHOLD_ADC_LOWER_EDGE: {getattr(config, 'EVENT61_THRESHOLD_ADC', 15.0)}\n")
+            f.write(f"EVENT61_FIT_CONFIG: {getattr(config, 'EVENT61_FIT_CONFIG', {})}\n")
             f.write(f"MASTER_PLOT_CONFIG: {getattr(config, 'MASTER_PLOT_CONFIG', {})}\n")
+            f.write(f"Legacy Total Beam-on Count: {self.total_beam_on_count}\n")
+            f.write(f"BRN Total Beam-on Count: {self.total_brn_beam_on_count}\n")
+            f.write(f"Runs With Event61 Adjustment Applied: {self.event61_applied_run_count}\n")
+            f.write(f"Observed Event61 ADC Ranges: {sorted(self.event61_adc_ranges)}\n")
+            f.write(f"Observed Event61 Channel Indices: {sorted(self.event61_channel_indices)}\n")
             
             f.write(f"\nSub-job Directories Processed:\n")
             for d in self.subjob_dirs:

@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LogNorm, Normalize, SymLogNorm
 from scipy.optimize import curve_fit
 from scipy.stats import pearsonr
 import uproot
@@ -93,6 +93,10 @@ except ImportError:
         BRN_SIPM_THRESHOLD_ADC = 50
         BRN_DELTA_T_RANGE = (0, 100000)
         BRN_DELTA_T_BIN_WIDTH_NS = 128
+        ENABLE_EVENT61_SYNTHETIC_BIT = True
+        EVENT61_CHANNEL_INDEX = 22
+        EVENT61_ADC_RANGE = None
+        EVENT61_THRESHOLD_ADC = 15.0
         BRN_HIST_CONFIG = {
             'area_range': (0, 5000),
             'area_bins': 100
@@ -119,6 +123,17 @@ except ImportError:
             'fit_window_half_width_pe': 12.0,
             'min_fit_points': 6,
         }
+        EVENT61_FIT_CONFIG = {
+            'enabled': True,
+            'bins': 200,
+            'hist_range': (0, 200),
+            'fit_range': (20, 40),
+            'signal_range': (20, 40),
+            'min_fit_points': 6,
+            'figure_size': (10, 6),
+            'dpi': 300,
+            'logscale': False,
+        }
     config = DefaultConfig()
 
 PANEL_GROUP = {
@@ -126,6 +141,347 @@ PANEL_GROUP = {
     3: "top", 4: "wide", 5: "top", 6: "top",
     7: "top", 8: "thin", 9: "thin", 10: "thin",
 }
+
+
+def _get_event61_adc_window():
+    """Return the configured inclusive Event61 ADC window, with threshold fallback."""
+    adc_range = getattr(config, 'EVENT61_ADC_RANGE', None)
+    if isinstance(adc_range, (tuple, list)) and len(adc_range) == 2:
+        try:
+            adc_min = float(adc_range[0])
+            adc_max = float(adc_range[1])
+        except (TypeError, ValueError):
+            adc_min = np.nan
+            adc_max = np.nan
+        if np.isfinite(adc_min) and np.isfinite(adc_max) and adc_max >= adc_min:
+            return adc_min, adc_max
+
+    adc_min = float(getattr(config, 'EVENT61_THRESHOLD_ADC', 15.0))
+    return adc_min, np.inf
+
+
+def _serialize_event61_adc_window(adc_min, adc_max):
+    """Serialize the Event61 ADC window for JSON summaries."""
+    return [float(adc_min), float(adc_max) if np.isfinite(adc_max) else None]
+
+
+def _coerce_finite_window(window, fallback):
+    """Return a finite two-sided window or the provided fallback."""
+    if isinstance(window, (tuple, list)) and len(window) == 2:
+        try:
+            lo = float(window[0])
+            hi = float(window[1])
+        except (TypeError, ValueError):
+            return fallback
+        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+            return lo, hi
+    return fallback
+
+
+def get_event61_fit_config(overrides=None):
+    """Return normalized Event61 histogram/fit configuration."""
+    cfg = dict(getattr(config, 'EVENT61_FIT_CONFIG', {}) or {})
+    if isinstance(overrides, dict):
+        cfg.update(overrides)
+
+    hist_range = _coerce_finite_window(cfg.get('hist_range', (0, 200)), (0.0, 200.0))
+    fit_range_default = _coerce_finite_window(getattr(config, 'EVENT61_ADC_RANGE', (20, 40)), (20.0, 40.0))
+    fit_range = _coerce_finite_window(cfg.get('fit_range', fit_range_default), fit_range_default)
+    signal_range = _coerce_finite_window(cfg.get('signal_range', fit_range), fit_range)
+
+    return {
+        'enabled': bool(cfg.get('enabled', True)),
+        'bins': int(cfg.get('bins', 200)),
+        'hist_range': hist_range,
+        'fit_range': fit_range,
+        'signal_range': signal_range,
+        'min_fit_points': int(cfg.get('min_fit_points', 6)),
+        'figure_size': tuple(cfg.get('figure_size', (10, 6))),
+        'dpi': int(cfg.get('dpi', 300)),
+        'logscale': bool(cfg.get('logscale', False)),
+    }
+
+
+def _event61_gaussian_plus_constant(x, amp, mu, sigma, c):
+    sigma = np.maximum(sigma, 1e-6)
+    return amp * np.exp(-0.5 * ((x - mu) / sigma) ** 2) + c
+
+
+def _empty_event61_analysis(channel_index, channel_available, fit_config, n_entries=0):
+    fit_lo, fit_hi = fit_config['fit_range']
+    signal_lo, signal_hi = fit_config['signal_range']
+    hist_lo, hist_hi = fit_config['hist_range']
+    return {
+        'channel_index': int(channel_index),
+        'channel_available': bool(channel_available),
+        'n_entries': int(n_entries),
+        'fit_success': False,
+        'fit_mean_adc': np.nan,
+        'fit_mean_adc_err': np.nan,
+        'fit_sigma_adc': np.nan,
+        'fit_sigma_adc_err': np.nan,
+        'fit_amplitude': np.nan,
+        'fit_amplitude_err': np.nan,
+        'fit_constant': np.nan,
+        'fit_constant_err': np.nan,
+        'fit_chi2': np.nan,
+        'fit_ndof': np.nan,
+        'fit_reduced_chi2': np.nan,
+        'raw_window_count': 0.0,
+        'background_window_count': np.nan,
+        'background_window_count_err': np.nan,
+        'background_subtracted_count': np.nan,
+        'background_subtracted_count_err': np.nan,
+        'fit_window': [float(fit_lo), float(fit_hi)],
+        'signal_window': [float(signal_lo), float(signal_hi)],
+        'hist_range': [float(hist_lo), float(hist_hi)],
+        'bins': int(fit_config['bins']),
+        'popt': None,
+        'perr': None,
+        'fit_error': None,
+    }
+
+
+def extract_event61_channel_values(pulseh_array, channel_index=None):
+    """Extract finite Event61 pulse-height values from the configured channel."""
+    pulseh = np.asarray(pulseh_array)
+    event61_channel = int(getattr(config, 'EVENT61_CHANNEL_INDEX', 22) if channel_index is None else channel_index)
+    if pulseh.ndim != 2 or event61_channel < 0 or event61_channel >= pulseh.shape[1]:
+        return np.array([], dtype=float), event61_channel, False
+
+    values = np.asarray(pulseh[:, event61_channel], dtype=float)
+    values = values[np.isfinite(values)]
+    return values, event61_channel, True
+
+
+def build_event61_histogram_payload(pulseh_array, fit_config=None, channel_index=None):
+    """Build a histogram-only Event61 payload from pulseH arrays."""
+    cfg = get_event61_fit_config(fit_config)
+    edges = np.linspace(cfg['hist_range'][0], cfg['hist_range'][1], cfg['bins'] + 1)
+    counts = np.zeros(cfg['bins'], dtype=float)
+    values, event61_channel, channel_available = extract_event61_channel_values(pulseh_array, channel_index=channel_index)
+
+    if channel_available and values.size > 0:
+        counts, _ = np.histogram(values, bins=edges)
+
+    return {
+        'counts': counts,
+        'edges': edges,
+        'channel_index': int(event61_channel),
+        'channel_available': bool(channel_available),
+        'n_entries': int(values.size),
+    }
+
+
+def analyze_event61_histogram_payload(hist_payload, fit_config=None):
+    """Fit the Event61 histogram with a Gaussian plus constant background."""
+    cfg = get_event61_fit_config(fit_config)
+    counts = np.asarray(hist_payload.get('counts', []), dtype=float)
+    edges = np.asarray(hist_payload.get('edges', []), dtype=float)
+    channel_index = int(hist_payload.get('channel_index', getattr(config, 'EVENT61_CHANNEL_INDEX', 22)))
+    channel_available = bool(hist_payload.get('channel_available', False))
+    n_entries = int(hist_payload.get('n_entries', np.sum(counts)))
+    summary = _empty_event61_analysis(channel_index, channel_available, cfg, n_entries=n_entries)
+
+    if counts.size == 0 or edges.size != counts.size + 1:
+        summary['fit_error'] = 'Invalid histogram payload'
+        return summary
+
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    fit_lo, fit_hi = cfg['fit_range']
+    signal_lo, signal_hi = cfg['signal_range']
+    fit_mask = (centers >= fit_lo) & (centers <= fit_hi)
+    signal_mask = (centers >= signal_lo) & (centers <= signal_hi)
+
+    summary['raw_window_count'] = float(np.sum(counts[signal_mask]))
+    if (not channel_available) or np.sum(counts) <= 0:
+        summary['fit_error'] = 'No Event61 entries available'
+        return summary
+    if np.count_nonzero(fit_mask) < cfg['min_fit_points']:
+        summary['fit_error'] = 'Too few bins in fit window'
+        return summary
+    if float(np.sum(counts[fit_mask])) <= 0.0:
+        summary['fit_error'] = 'No counts in fit window'
+        return summary
+
+    x_fit = centers[fit_mask]
+    y_fit = counts[fit_mask]
+    amp_guess = max(float(np.max(y_fit) - np.min(y_fit)), 1.0)
+    mu_guess = float(x_fit[np.argmax(y_fit)])
+    sigma_guess = max(float(0.25 * (fit_hi - fit_lo)), 1.0)
+    c_guess = max(float(np.min(y_fit)), 0.0)
+    sigma_y = np.sqrt(np.clip(y_fit, 1.0, None))
+
+    try:
+        popt, pcov = curve_fit(
+            _event61_gaussian_plus_constant,
+            x_fit,
+            y_fit,
+            p0=[amp_guess, mu_guess, sigma_guess, c_guess],
+            bounds=([0.0, fit_lo, 1e-3, 0.0], [np.inf, fit_hi, fit_hi - fit_lo, np.inf]),
+            sigma=sigma_y,
+            absolute_sigma=True,
+            maxfev=30000,
+        )
+        perr = np.sqrt(np.diag(pcov)) if pcov is not None else np.full(len(popt), np.nan)
+        y_pred = _event61_gaussian_plus_constant(x_fit, *popt)
+        chi2 = float(np.sum(((y_fit - y_pred) / sigma_y) ** 2))
+        ndof = int(len(x_fit) - len(popt))
+        red_chi2 = chi2 / ndof if ndof > 0 else np.nan
+        background_sum = float(popt[3] * np.count_nonzero(signal_mask))
+        background_sum_err = float(perr[3] * np.count_nonzero(signal_mask)) if len(perr) > 3 and np.isfinite(perr[3]) else np.nan
+        background_subtracted = float(summary['raw_window_count'] - background_sum)
+        if np.isfinite(background_sum_err):
+            background_subtracted_err = float(np.sqrt(max(summary['raw_window_count'], 0.0) + background_sum_err ** 2))
+        else:
+            background_subtracted_err = float(np.sqrt(max(summary['raw_window_count'], 0.0)))
+
+        summary.update({
+            'fit_success': True,
+            'fit_mean_adc': float(popt[1]),
+            'fit_mean_adc_err': float(perr[1]) if len(perr) > 1 and np.isfinite(perr[1]) else np.nan,
+            'fit_sigma_adc': float(popt[2]),
+            'fit_sigma_adc_err': float(perr[2]) if len(perr) > 2 and np.isfinite(perr[2]) else np.nan,
+            'fit_amplitude': float(popt[0]),
+            'fit_amplitude_err': float(perr[0]) if len(perr) > 0 and np.isfinite(perr[0]) else np.nan,
+            'fit_constant': float(popt[3]),
+            'fit_constant_err': float(perr[3]) if len(perr) > 3 and np.isfinite(perr[3]) else np.nan,
+            'fit_chi2': chi2,
+            'fit_ndof': ndof,
+            'fit_reduced_chi2': red_chi2,
+            'background_window_count': background_sum,
+            'background_window_count_err': background_sum_err,
+            'background_subtracted_count': background_subtracted,
+            'background_subtracted_count_err': background_subtracted_err,
+            'popt': popt,
+            'perr': perr,
+        })
+    except Exception as exc:
+        summary['fit_error'] = str(exc)
+
+    return summary
+
+
+def plot_event61_histogram_payload(hist_payload, output_dir, file_label, M1_or_M2,
+                                   fit_config=None, filename_suffix='event61_pulseh_fit',
+                                   title_prefix='Event61 pulseH'):
+    """Plot and save the Event61 histogram and fit summary."""
+    cfg = get_event61_fit_config(fit_config)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    counts = np.asarray(hist_payload.get('counts', []), dtype=float)
+    edges = np.asarray(hist_payload.get('edges', []), dtype=float)
+    analysis = analyze_event61_histogram_payload(hist_payload, cfg)
+    filename_label = file_label.replace(' ', '_').replace('-', '_').replace(':', '')
+    base_filename = f'{filename_label}_{M1_or_M2}_{filename_suffix}'
+
+    fig, ax = plt.subplots(figsize=cfg['figure_size'])
+    bin_width = float(np.median(np.diff(edges))) if edges.size > 1 else np.nan
+    if counts.size > 0 and edges.size == counts.size + 1:
+        ax.step(edges, np.append(counts, counts[-1] if len(counts) > 0 else 0.0), where='post', linewidth=1.6,
+                color='navy', label=f'Finite entries: {analysis["n_entries"]:,}')
+
+    fit_lo, fit_hi = cfg['fit_range']
+    signal_lo, signal_hi = cfg['signal_range']
+    ax.axvspan(signal_lo, signal_hi, color='gold', alpha=0.14, label=f'Signal window [{signal_lo:.0f}, {signal_hi:.0f}]')
+    if (fit_lo, fit_hi) != (signal_lo, signal_hi):
+        ax.axvspan(fit_lo, fit_hi, color='gray', alpha=0.12, label=f'Fit window [{fit_lo:.0f}, {fit_hi:.0f}]')
+
+    if analysis.get('fit_success') and analysis.get('popt') is not None:
+        x_plot = np.linspace(fit_lo, fit_hi, 500)
+        ax.plot(
+            x_plot,
+            _event61_gaussian_plus_constant(x_plot, *analysis['popt']),
+            color='crimson',
+            linewidth=1.8,
+            label=(
+                f'Fit: $\\mu$={analysis["fit_mean_adc"]:.2f}±{analysis["fit_mean_adc_err"]:.2f}, '
+                f'$\\sigma$={analysis["fit_sigma_adc"]:.2f}±{analysis["fit_sigma_adc_err"]:.2f}'
+            )
+        )
+
+    textbox_lines = [
+        f'Raw [{signal_lo:.0f}, {signal_hi:.0f}] count: {analysis["raw_window_count"]:.1f}',
+        f'Background-subtracted: {analysis["background_subtracted_count"]:.1f} ± {analysis["background_subtracted_count_err"]:.1f}' if np.isfinite(analysis['background_subtracted_count']) else 'Background-subtracted: n/a',
+        f'Constant background/bin: {analysis["fit_constant"]:.2f} ± {analysis["fit_constant_err"]:.2f}' if np.isfinite(analysis['fit_constant']) else 'Constant background/bin: n/a',
+        f'Reduced $\\chi^2$: {analysis["fit_reduced_chi2"]:.2f}' if np.isfinite(analysis['fit_reduced_chi2']) else 'Reduced $\\chi^2$: n/a',
+    ]
+    ax.text(
+        0.98,
+        0.97,
+        '\n'.join(textbox_lines),
+        transform=ax.transAxes,
+        ha='right',
+        va='top',
+        fontsize=10,
+        bbox=dict(boxstyle='round', facecolor='white', alpha=0.75),
+    )
+
+    ax.set_title(f'{title_prefix} (Ch {analysis["channel_index"]}, {file_label}, {M1_or_M2})')
+    ax.set_xlabel('pulseH (ADC)')
+    if np.isfinite(bin_width):
+        ax.set_ylabel(f'Events/{bin_width:g} ADC')
+    else:
+        ax.set_ylabel('Events')
+    ax.set_xlim(cfg['hist_range'])
+    if cfg['logscale']:
+        ax.set_yscale('log')
+        ax.set_ylim(0.8, None)
+    ax.grid(True, which='major', linestyle='-', linewidth=0.7, alpha=0.35)
+    ax.grid(True, which='minor', linestyle=':', linewidth=0.5, alpha=0.25)
+    ax.minorticks_on()
+    ax.legend(loc='upper left', fontsize='small')
+    fig.tight_layout()
+
+    img_save_path = output_dir / f'{base_filename}.png'
+    pkl_save_path = output_dir / f'{base_filename}.pkl'
+    summary_pkl_path = output_dir / f'{base_filename}_summary.pkl'
+    summary_csv_path = output_dir / f'{base_filename}_summary.csv'
+
+    fig.savefig(img_save_path, dpi=cfg['dpi'])
+    plt.close(fig)
+
+    with open(pkl_save_path, 'wb') as f:
+        pickle.dump({'hist_payload': hist_payload, 'analysis': analysis}, f)
+
+    summary_df = pd.DataFrame([{
+        'channel_index': analysis['channel_index'],
+        'channel_available': analysis['channel_available'],
+        'n_entries': analysis['n_entries'],
+        'fit_success': analysis['fit_success'],
+        'fit_mean_adc': analysis['fit_mean_adc'],
+        'fit_mean_adc_err': analysis['fit_mean_adc_err'],
+        'fit_sigma_adc': analysis['fit_sigma_adc'],
+        'fit_sigma_adc_err': analysis['fit_sigma_adc_err'],
+        'fit_amplitude': analysis['fit_amplitude'],
+        'fit_amplitude_err': analysis['fit_amplitude_err'],
+        'fit_constant': analysis['fit_constant'],
+        'fit_constant_err': analysis['fit_constant_err'],
+        'fit_chi2': analysis['fit_chi2'],
+        'fit_ndof': analysis['fit_ndof'],
+        'fit_reduced_chi2': analysis['fit_reduced_chi2'],
+        'raw_window_count': analysis['raw_window_count'],
+        'background_window_count': analysis['background_window_count'],
+        'background_window_count_err': analysis['background_window_count_err'],
+        'background_subtracted_count': analysis['background_subtracted_count'],
+        'background_subtracted_count_err': analysis['background_subtracted_count_err'],
+        'fit_window_min': analysis['fit_window'][0],
+        'fit_window_max': analysis['fit_window'][1],
+        'signal_window_min': analysis['signal_window'][0],
+        'signal_window_max': analysis['signal_window'][1],
+        'hist_min': analysis['hist_range'][0],
+        'hist_max': analysis['hist_range'][1],
+        'bins': analysis['bins'],
+        'fit_error': analysis['fit_error'],
+    }])
+    summary_df.to_pickle(summary_pkl_path)
+    summary_df.to_csv(summary_csv_path, index=False)
+
+    print(f'Event61 pulseH fit saved to {img_save_path}')
+    print(f'Event61 pulseH fit data saved to {pkl_save_path}')
+
+    return analysis
 
 class HistogramCalculator:
     """Handles histogram calculations and binning."""
@@ -334,12 +690,60 @@ class ThinVetoAnalyzer:
 
 class BRNAnalyzer:
     """Handles Beam-Related Neutron analysis."""
+
+    @staticmethod
+    def build_brn_trigger_info(trigger_bits, pulseh_array):
+        """Build BRN-only trigger masks without mutating the shared triggerBits values."""
+        trigger_bits_np = np.asarray(trigger_bits, dtype=np.int64)
+        pulseh_array_np = np.asarray(pulseh_array)
+        event_count = len(trigger_bits_np)
+        event61_channel_index = int(getattr(config, 'EVENT61_CHANNEL_INDEX', 22))
+        event61_adc_min, event61_adc_max = _get_event61_adc_window()
+        event61_enabled = bool(getattr(config, 'ENABLE_EVENT61_SYNTHETIC_BIT', False))
+
+        event61_mask = np.zeros(event_count, dtype=bool)
+        channel_available = (
+            pulseh_array_np.ndim == 2
+            and pulseh_array_np.shape[0] == event_count
+            and pulseh_array_np.shape[1] > event61_channel_index
+        )
+        if event61_enabled and channel_available:
+            event61_values = np.asarray(pulseh_array_np[:, event61_channel_index], dtype=float)
+            event61_mask = np.isfinite(event61_values) & (event61_values >= event61_adc_min)
+            if np.isfinite(event61_adc_max):
+                event61_mask &= event61_values <= event61_adc_max
+        elif event61_enabled and event_count > 0:
+            print(
+                f"Event61 synthetic bit enabled, but pulseH[{event61_channel_index}] is unavailable. "
+                "Using legacy BRN trigger logic."
+            )
+
+        if event61_enabled and channel_available:
+            beam_on_mask = event61_mask
+        else:
+            beam_on_mask = trigger_bits_np == 1
+
+        sipm_mask = np.isin(trigger_bits_np, [32, 34])
+
+        return {
+            'beam_on_mask': beam_on_mask,
+            'sipm_mask': sipm_mask,
+            'event61_mask': event61_mask,
+            'event61_count': int(np.count_nonzero(event61_mask)),
+            'event61_adc_min': event61_adc_min,
+            'event61_adc_max': event61_adc_max,
+            'event61_adc_range': _serialize_event61_adc_window(event61_adc_min, event61_adc_max),
+            'event61_threshold_adc': event61_adc_min,
+            'event61_channel_index': event61_channel_index,
+            'event61_adjustment_applied': bool(event61_enabled and channel_available),
+            'event61_channel_available': bool(channel_available),
+        }
     
     @staticmethod
-    def compute_brn_data(df, pulseh_array, area_array, channels_to_analyze, brn_threshold):
+    def compute_brn_data(df, pulseh_array, area_array, channels_to_analyze, brn_threshold, brn_trigger_info=None):
         """
         Computes BRN delta_t and SiPM area data on a per-channel basis.
-        - BRN delta_t: Time between SiPM event (trig 32/34) and previous beam-on (trig 0).
+        - BRN delta_t: Time between SiPM event and previous BRN beam-on reference.
         - Data is stored only for channels that exceed the brn_threshold.
         """
         pulseh_array = np.asarray(pulseh_array)
@@ -351,9 +755,13 @@ class BRNAnalyzer:
                 f"len(pulseh_array)={len(pulseh_array)}, len(area_array)={len(area_array)}"
             )
 
-        # Get times for beam-on (trig 0) and SiPM (trig 32/34) events
-        beam_on_times = df.loc[df['triggerBits'] == 0, 'nsTime'].values
-        sipm_mask = ((df['triggerBits'] == 32) | (df['triggerBits'] == 34)).to_numpy(dtype=bool)
+        if brn_trigger_info is None:
+            brn_trigger_info = BRNAnalyzer.build_brn_trigger_info(df['triggerBits'].to_numpy(), pulseh_array)
+        beam_on_mask = np.asarray(brn_trigger_info.get('beam_on_mask', np.zeros(len(df), dtype=bool)), dtype=bool)
+        sipm_mask = np.asarray(brn_trigger_info.get('sipm_mask', np.zeros(len(df), dtype=bool)), dtype=bool)
+
+        # Get times for BRN beam-on reference events and SiPM candidate events.
+        beam_on_times = df.loc[beam_on_mask, 'nsTime'].values
         sipm_events = df.loc[sipm_mask].copy().reset_index(drop=True)
 
         if sipm_events.empty or beam_on_times.size == 0:
@@ -375,42 +783,46 @@ class BRNAnalyzer:
         all_brn_delta_t = sipm_events['brn_delta_t'].values
 
         # Initialize data structure
-        channel_data = {ch: {'delta_t': [], 'area': []} for ch in channels_to_analyze}
+        channel_data = {ch: {'delta_t': [], 'area': [], 'delta_t_area': []} for ch in channels_to_analyze}
 
         # Filter events by delta_t cut (apply to both delta_t and area data)
         dt_min, dt_max = config.BRN_DELTA_T_RANGE
         dt_cut_mask = ((sipm_events['brn_delta_t'] >= dt_min) & (sipm_events['brn_delta_t'] <= dt_max)).to_numpy(dtype=bool)
         events_in_dt_range = sipm_events.loc[dt_cut_mask]
         
-        # Populate delta_t data (only for events in dt cut)
+        # Populate per-channel 1D and paired 2D BRN observables for events in the dt cut.
         if not events_in_dt_range.empty:
             filtered_pulseh_array_dt = sipm_pulseh_array[dt_cut_mask]
+            filtered_area_array = sipm_area_array[dt_cut_mask]
             filtered_brn_delta_t = all_brn_delta_t[dt_cut_mask]
-            
+
             for i in range(len(events_in_dt_range)):
                 event_dt = filtered_brn_delta_t[i]
                 if not np.isfinite(event_dt):
                     continue
-                
-                event_pulseh = filtered_pulseh_array_dt[i]
-                for ch in channels_to_analyze:
-                    if ch < len(event_pulseh) and event_pulseh[ch] > brn_threshold:
-                        channel_data[ch]['delta_t'].append(event_dt)
-        
-            # Populate area data (using same filtered events)
-            filtered_area_array = sipm_area_array[dt_cut_mask]
 
-            for i in range(len(events_in_dt_range)):
                 event_pulseh = filtered_pulseh_array_dt[i]
                 event_area = filtered_area_array[i]
                 for ch in channels_to_analyze:
-                    if ch < len(event_pulseh) and event_pulseh[ch] > brn_threshold:
-                        channel_data[ch]['area'].append(event_area[ch])
+                    if ch >= len(event_pulseh) or ch >= len(event_area) or event_pulseh[ch] <= brn_threshold:
+                        continue
+                    area_value = event_area[ch]
+                    if not np.isfinite(area_value):
+                        continue
+                    channel_data[ch]['delta_t'].append(event_dt)
+                    channel_data[ch]['area'].append(area_value)
+                    channel_data[ch]['delta_t_area'].append((event_dt, area_value))
 
         # Convert lists to numpy arrays
         for ch in channels_to_analyze:
             channel_data[ch]['delta_t'] = np.array(channel_data[ch]['delta_t'])
             channel_data[ch]['area'] = np.array(channel_data[ch]['area'])
+            channel_pairs = np.asarray(channel_data[ch]['delta_t_area'], dtype=float)
+            if channel_pairs.size == 0:
+                channel_pairs = np.empty((0, 2), dtype=float)
+            else:
+                channel_pairs = channel_pairs.reshape(-1, 2)
+            channel_data[ch]['delta_t_area'] = channel_pairs
 
         return channel_data
 
@@ -500,12 +912,95 @@ class BRNAnalyzer:
         plt.savefig(output_dir / f'{filename_label}_{M1_or_M2}_brn_area.png')
         plt.close()
 
+        # Plot BRN Delta T vs Area Heatmaps
+        heatmap_cfg = getattr(config, 'BRN_HIST_CONFIG', {}) or {}
+        heatmap_cmap = heatmap_cfg.get('heatmap_cmap', 'viridis')
+        heatmap_logscale = bool(heatmap_cfg.get('heatmap_logscale', True))
+
+        fig_heatmap, axes_heatmap = plt.subplots(3, 4, figsize=(20, 15))
+        fig_heatmap.suptitle(f'BRN Δt vs Area by Channel - {label} ({M1_or_M2})', fontsize=16)
+        axes_heatmap = axes_heatmap.flatten()
+
+        heatmap_artist = None
+        active_axes = []
+        max_heatmap_count = 0.0
+
+        for ch in channels_to_analyze:
+            ch_pairs = np.asarray(channel_data.get(ch, {}).get('delta_t_area', np.empty((0, 2))), dtype=float)
+            if ch_pairs.size == 0 and ch in channel_data:
+                dt_values = np.asarray(channel_data[ch].get('delta_t', np.array([])), dtype=float)
+                area_values = np.asarray(channel_data[ch].get('area', np.array([])), dtype=float)
+                if dt_values.size > 0 and dt_values.size == area_values.size:
+                    ch_pairs = np.column_stack((dt_values, area_values))
+            if ch_pairs.size > 0:
+                heatmap_counts, _, _ = np.histogram2d(
+                    ch_pairs[:, 0],
+                    ch_pairs[:, 1],
+                    bins=[dt_bins, area_bin_edges],
+                )
+                max_heatmap_count = max(max_heatmap_count, float(np.max(heatmap_counts)))
+
+        norm = Normalize(vmin=0.0, vmax=max_heatmap_count if max_heatmap_count > 0 else 1.0)
+        if heatmap_logscale and max_heatmap_count > 1.0:
+            norm = SymLogNorm(linthresh=1.0, linscale=1.0, vmin=0.0, vmax=max_heatmap_count, base=10)
+
+        for i, ch in enumerate(channels_to_analyze):
+            ax = axes_heatmap[i]
+            ch_pairs = np.asarray(channel_data.get(ch, {}).get('delta_t_area', np.empty((0, 2))), dtype=float)
+            if ch_pairs.size == 0 and ch in channel_data:
+                dt_values = np.asarray(channel_data[ch].get('delta_t', np.array([])), dtype=float)
+                area_values = np.asarray(channel_data[ch].get('area', np.array([])), dtype=float)
+                if dt_values.size > 0 and dt_values.size == area_values.size:
+                    ch_pairs = np.column_stack((dt_values, area_values))
+
+            if ch_pairs.size > 0:
+                heatmap_counts, _, _ = np.histogram2d(
+                    ch_pairs[:, 0],
+                    ch_pairs[:, 1],
+                    bins=[dt_bins, area_bin_edges],
+                )
+                heatmap_artist = ax.pcolormesh(
+                    dt_bins,
+                    area_bin_edges,
+                    heatmap_counts.T,
+                    shading='auto',
+                    cmap=heatmap_cmap,
+                    norm=norm,
+                )
+                active_axes.append(ax)
+                ax.set_title(f'Channel {ch}')
+                ax.set_xlabel('Δt (ns)')
+                ax.set_ylabel('Area (ADC)')
+                ax.set_xlim(brn_dt_range)
+                ax.set_ylim(area_range)
+                ax.grid(False)
+            else:
+                ax.text(0.5, 0.5, f'Ch {ch}\nNo Data', ha='center', va='center', transform=ax.transAxes)
+                ax.axis('off')
+
+        for i in range(len(channels_to_analyze), len(axes_heatmap)):
+            axes_heatmap[i].axis('off')
+
+        if heatmap_artist is not None and active_axes:
+            fig_heatmap.subplots_adjust(left=0.06, right=0.90, bottom=0.07, top=0.92, wspace=0.22, hspace=0.28)
+            cax = fig_heatmap.add_axes([0.92, 0.12, 0.018, 0.72])
+            colorbar = fig_heatmap.colorbar(heatmap_artist, cax=cax)
+            colorbar.set_label('Events')
+        else:
+            fig_heatmap.subplots_adjust(left=0.06, right=0.96, bottom=0.07, top=0.92, wspace=0.22, hspace=0.28)
+        plt.savefig(output_dir / f'{filename_label}_{M1_or_M2}_brn_delta_t_area.png')
+        plt.close()
+
     @staticmethod
     def histogram_brn_channel_data(channel_data, brn_dt_range, hist_config):
         """Convert BRN per-channel arrays into a compact histogram payload."""
         dt_min, dt_max = brn_dt_range
         dt_bin_width = int(getattr(config, 'BRN_DELTA_T_BIN_WIDTH_NS', 128))
         dt_edges = np.arange(dt_min, dt_max + dt_bin_width, dt_bin_width)
+        if dt_edges[-1] < dt_max:
+            dt_edges = np.append(dt_edges, dt_max)
+        elif dt_edges[-1] > dt_max:
+            dt_edges[-1] = dt_max
 
         area_range = tuple(hist_config['area_range'])
         area_bins = int(hist_config['area_bins'])
@@ -520,9 +1015,27 @@ class BRNAnalyzer:
         for ch, data in channel_data.items():
             dt_data = np.asarray(data.get('delta_t', np.array([])), dtype=float)
             area_data = np.asarray(data.get('area', np.array([])), dtype=float)
+            dt_area_pairs = np.asarray(data.get('delta_t_area', np.empty((0, 2))), dtype=float)
+            if dt_area_pairs.ndim == 1 and dt_area_pairs.size == 0:
+                dt_area_pairs = np.empty((0, 2), dtype=float)
+            elif dt_area_pairs.ndim == 1:
+                dt_area_pairs = dt_area_pairs.reshape(-1, 2)
+
+            if dt_area_pairs.size > 0:
+                dt_area_counts, _, _ = np.histogram2d(
+                    dt_area_pairs[:, 0],
+                    dt_area_pairs[:, 1],
+                    bins=[dt_edges, area_edges],
+                )
+            elif dt_data.size > 0 and dt_data.size == area_data.size:
+                dt_area_counts, _, _ = np.histogram2d(dt_data, area_data, bins=[dt_edges, area_edges])
+            else:
+                dt_area_counts = np.zeros((len(dt_edges) - 1, len(area_edges) - 1), dtype=float)
+
             payload['counts'][ch] = {
                 'delta_t': np.histogram(dt_data, bins=dt_edges)[0],
                 'area': np.histogram(area_data, bins=area_edges)[0],
+                'delta_t_area': dt_area_counts,
             }
 
         return payload
@@ -945,12 +1458,71 @@ class RunProcessor:
             pe_trig2.to_numpy(), pe_trig2_or_34.to_numpy(), bins, veto_bins, vetorange, pe_cut
         )
 
-        beam_on_count = int(np.count_nonzero(df_all['triggerBits'].to_numpy() == 0))
+        event61_fit_config = self._get_default_event61_fit_config()
+        event61_summary = _empty_event61_analysis(
+            getattr(config, 'EVENT61_CHANNEL_INDEX', 22),
+            False,
+            event61_fit_config,
+            n_entries=0,
+        )
+        event61_hist_payload = None
+        full_area_array = None
+        pulseh_array = None
+        brn_trigger_info = None
+        needs_pulseh_array = (
+            event61_fit_config.get('enabled', True)
+            or config.PERFORM_THIN_VETO_ANALYSIS
+            or config.PERFORM_BRN_ANALYSIS
+        )
+        if 'pulseH_array' in df_all.columns and needs_pulseh_array:
+            pulseh_array = np.array(df_all['pulseH_array'].to_list())
+            if 'area_array' in df_all.columns and (config.PERFORM_THIN_VETO_ANALYSIS or config.PERFORM_BRN_ANALYSIS):
+                full_area_array = np.array(df_all['area_array'].to_list())
+            if config.PERFORM_BRN_ANALYSIS:
+                brn_trigger_info = BRNAnalyzer.build_brn_trigger_info(df_all['triggerBits'].to_numpy(), pulseh_array)
+
+        if event61_fit_config.get('enabled', True):
+            event61_dir = run_dir / 'event61'
+            self.file_handler.ensure_dir(event61_dir)
+            if pulseh_array is not None:
+                event61_hist_payload = build_event61_histogram_payload(
+                    pulseh_array,
+                    fit_config=event61_fit_config,
+                    channel_index=getattr(config, 'EVENT61_CHANNEL_INDEX', 22),
+                )
+                event61_summary = plot_event61_histogram_payload(
+                    event61_hist_payload,
+                    event61_dir,
+                    f'Run{run}',
+                    M1_or_M2,
+                    fit_config=event61_fit_config,
+                    filename_suffix='event61_pulseh_fit',
+                    title_prefix='Event61 pulseH',
+                )
+            else:
+                print(f"No pulseH data available for run {run}; skipping Event61 histogram fit.")
+
+        beam_on_count = int(np.count_nonzero(df_all['triggerBits'].to_numpy() == 1))
+        brn_beam_on_count = beam_on_count
+        event61_adjustment_applied = False
+        event61_adc_min, event61_adc_max = _get_event61_adc_window()
+        event61_channel_index = int(getattr(config, 'EVENT61_CHANNEL_INDEX', 22))
+        event61_count = 0
+        event61_channel_available = False
+        if brn_trigger_info is not None:
+            brn_beam_on_count = int(np.count_nonzero(brn_trigger_info['beam_on_mask']))
+            event61_adjustment_applied = bool(brn_trigger_info['event61_adjustment_applied'])
+            event61_adc_min = float(brn_trigger_info['event61_adc_min'])
+            event61_adc_max = float(brn_trigger_info['event61_adc_max'])
+            event61_channel_index = int(brn_trigger_info['event61_channel_index'])
+            event61_count = int(brn_trigger_info['event61_count'])
+            event61_channel_available = bool(brn_trigger_info['event61_channel_available'])
 
         run_veto_summary = {
             'run': int(run),
             'run_start_time': run_start_time_str,
             'beam_on_count': beam_on_count,
+            'brn_beam_on_count': brn_beam_on_count,
             'average_efficiency': veto_summary.get('average_efficiency', np.nan),
             'average_efficiency_error': veto_summary.get('average_efficiency_error', np.nan),
             'valid_bin_count': veto_summary.get('valid_bin_count', 0),
@@ -967,6 +1539,26 @@ class RunProcessor:
                 float(michel_summary.get('fwhm_max', np.nan))
             ],
             'michel_fit_success': bool(michel_summary.get('success', False)),
+            'event61_adjustment_applied': event61_adjustment_applied,
+            'event61_adc_range': _serialize_event61_adc_window(event61_adc_min, event61_adc_max),
+            'event61_threshold_adc': event61_adc_min,
+            'event61_channel_index': event61_channel_index,
+            'event61_count': event61_count,
+            'event61_channel_available': event61_channel_available,
+            'event61_hist_total_entries': int(event61_summary.get('n_entries', 0)),
+            'event61_fit_success': bool(event61_summary.get('fit_success', False)),
+            'event61_fit_mean_adc': float(event61_summary.get('fit_mean_adc', np.nan)),
+            'event61_fit_mean_adc_err': float(event61_summary.get('fit_mean_adc_err', np.nan)),
+            'event61_fit_sigma_adc': float(event61_summary.get('fit_sigma_adc', np.nan)),
+            'event61_fit_sigma_adc_err': float(event61_summary.get('fit_sigma_adc_err', np.nan)),
+            'event61_fit_constant': float(event61_summary.get('fit_constant', np.nan)),
+            'event61_fit_constant_err': float(event61_summary.get('fit_constant_err', np.nan)),
+            'event61_fit_reduced_chi2': float(event61_summary.get('fit_reduced_chi2', np.nan)),
+            'event61_raw_window_count': float(event61_summary.get('raw_window_count', 0.0)),
+            'event61_background_window_count': float(event61_summary.get('background_window_count', np.nan)),
+            'event61_background_window_count_err': float(event61_summary.get('background_window_count_err', np.nan)),
+            'event61_background_subtracted_count': float(event61_summary.get('background_subtracted_count', np.nan)),
+            'event61_background_subtracted_count_err': float(event61_summary.get('background_subtracted_count_err', np.nan)),
         }
 
         hl_peak = np.full(12, np.nan)
@@ -1012,10 +1604,7 @@ class RunProcessor:
         brn_hist_payload = None
         
         # Perform thin veto and BRN analysis if pulseH data is available
-        if 'pulseH_array' in df_all.columns and (config.PERFORM_THIN_VETO_ANALYSIS or config.PERFORM_BRN_ANALYSIS):
-            full_area_array = np.array(df_all['area_array'].to_list())
-            pulseh_array = np.array(df_all['pulseH_array'].to_list())
-            
+        if pulseh_array is not None and (config.PERFORM_THIN_VETO_ANALYSIS or config.PERFORM_BRN_ANALYSIS):
             # Thin veto analysis
             if config.PERFORM_THIN_VETO_ANALYSIS:
                 tv_raw_data = ThinVetoAnalyzer.plot_thin_veto_performance(
@@ -1044,7 +1633,8 @@ class RunProcessor:
                 brn_data = BRNAnalyzer.compute_brn_data(
                     df_all, pulseh_array, full_area_array,
                     config.BRN_SIPM_CHANNELS,
-                    config.BRN_SIPM_THRESHOLD_ADC
+                    config.BRN_SIPM_THRESHOLD_ADC,
+                    brn_trigger_info=brn_trigger_info,
                 )
                 if brn_data:
                     BRNAnalyzer.plot_brn_histograms(
@@ -1068,6 +1658,7 @@ class RunProcessor:
                 cut_payload,
                 ll_hist_counts, ll_bin_edges,
                 hl_hist_counts, hl_bin_edges, hl_sum_payload,
+                event61_hist_payload,
                 sipm_hist_payload, veto_hist_payload,
                 tv_hist_counts, tv_bin_edges,
                 brn_hist_payload,
@@ -1078,6 +1669,7 @@ class RunProcessor:
             None,
             ll_hist_counts, ll_bin_edges,
             hl_hist_counts, hl_bin_edges, hl_sum_payload,
+            event61_hist_payload,
             sipm_hist_payload, veto_hist_payload,
             tv_hist_counts, tv_bin_edges,
             brn_hist_payload,
@@ -1115,6 +1707,9 @@ class RunProcessor:
             'fit_window_half_width_pe': float(cfg.get('fit_window_half_width_pe', 12.0)),
             'min_fit_points': int(cfg.get('min_fit_points', 6)),
         }
+
+    def _get_default_event61_fit_config(self):
+        return get_event61_fit_config()
 
     def _build_sipm_area_hist_payload(self, sipm_events_df):
         """Build subjob-level SiPM area histograms without storing raw event frames."""
@@ -2266,6 +2861,8 @@ def main():
         'delta_t_edges': None,
         'total_pe_hist': None,
         'total_pe_edges': None,
+        'event61_hist': None,
+        'event61_edges': None,
         'sipm_area_hists': None,
         'sipm_area_edges': None,
         'veto_histograms': None,
@@ -2310,6 +2907,7 @@ def main():
                     (main_hist_payload,
                      ll_hists, ll_edges,
                      hl_hists, hl_edges, hl_sum_payload,
+                     event61_hist_payload,
                      sipm_hist_payload, veto_hist_payload,
                      tv_hists, tv_edges,
                      brn_hist_payload,
@@ -2344,6 +2942,15 @@ def main():
                     aggregated['highlight_sum12_hists'].append(np.asarray(hl_sum_payload.get('counts', []), dtype=float))
                     if hl_sum_edges_agg is None:
                         hl_sum_edges_agg = np.asarray(hl_sum_payload.get('edges', []), dtype=float)
+
+                if event61_hist_payload is not None:
+                    aggregated['event61_hist'], aggregated['event61_edges'] = accumulate_counts(
+                        aggregated['event61_hist'],
+                        aggregated['event61_edges'],
+                        event61_hist_payload['counts'],
+                        event61_hist_payload['edges'],
+                        'event61'
+                    )
                 
                 if sipm_hist_payload is not None:
                     if aggregated['sipm_area_hists'] is None:
@@ -2382,11 +2989,19 @@ def main():
                 
                 # BRN channel data
                 if brn_hist_payload is not None:
+                    brn_heatmap_shape = (
+                        len(np.asarray(brn_hist_payload['delta_t_edges'], dtype=float)) - 1,
+                        len(np.asarray(brn_hist_payload['area_edges'], dtype=float)) - 1,
+                    )
                     if aggregated['brn_channel_hists'] is None:
                         aggregated['brn_channel_hists'] = {
                             ch: {
                                 'delta_t': np.asarray(counts['delta_t'], dtype=float).copy(),
                                 'area': np.asarray(counts['area'], dtype=float).copy(),
+                                'delta_t_area': np.asarray(
+                                    counts.get('delta_t_area', np.zeros(brn_heatmap_shape, dtype=float)),
+                                    dtype=float,
+                                ).copy(),
                             }
                             for ch, counts in brn_hist_payload['counts'].items()
                         }
@@ -2402,10 +3017,18 @@ def main():
                                 aggregated['brn_channel_hists'][ch] = {
                                     'delta_t': np.asarray(counts['delta_t'], dtype=float).copy(),
                                     'area': np.asarray(counts['area'], dtype=float).copy(),
+                                    'delta_t_area': np.asarray(
+                                        counts.get('delta_t_area', np.zeros(brn_heatmap_shape, dtype=float)),
+                                        dtype=float,
+                                    ).copy(),
                                 }
                             else:
                                 aggregated['brn_channel_hists'][ch]['delta_t'] += np.asarray(counts['delta_t'], dtype=float)
                                 aggregated['brn_channel_hists'][ch]['area'] += np.asarray(counts['area'], dtype=float)
+                                aggregated['brn_channel_hists'][ch]['delta_t_area'] += np.asarray(
+                                    counts.get('delta_t_area', np.zeros(brn_heatmap_shape, dtype=float)),
+                                    dtype=float,
+                                )
                     
         except Exception as e:
             print(f"Error processing run {run}: {e}")
@@ -2429,6 +3052,11 @@ def main():
             FileHandler.save_pickle(
                 {'counts': aggregated['total_pe_hist'], 'edges': aggregated['total_pe_edges']},
                 output_dir / 'aggregated_total_pe_hist.pkl'
+            )
+        if aggregated['event61_hist'] is not None and aggregated['event61_edges'] is not None:
+            FileHandler.save_pickle(
+                {'counts': aggregated['event61_hist'], 'edges': aggregated['event61_edges']},
+                output_dir / 'aggregated_event61_hist.pkl'
             )
 
         # Save SiPM histogram data

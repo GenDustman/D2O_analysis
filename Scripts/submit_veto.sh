@@ -15,7 +15,7 @@ start_run=5616
 end_run=6359
 step=1  # NEW: Process every Nth run
 M1_or_M2="M2"
-njobs=40
+njobs=30
 partition="blue"
 
 # Data Directories
