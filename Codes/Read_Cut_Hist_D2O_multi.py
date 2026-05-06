@@ -357,7 +357,7 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, M1_or_M2, hist_ran
         return pedestal + spe + dpe + tpe
 
     fig, axes = plt.subplots(3, 4, figsize=(20, 15))
-    fig.suptitle(f'Low-Light Channel Area Fits ({file_label}, {M1_or_M2})', fontsize=16)
+    fig.suptitle(f'Low-Light Channel Area Fits ({file_label}, {M1_or_M2})', fontsize=20)
     axes = axes.flatten()
     
     mu1_values = np.full(12, np.nan)
@@ -380,19 +380,20 @@ def fit_and_plot_low_light(area_data, output_dir, file_label, M1_or_M2, hist_ran
             ax.plot(fit_x, constrained_gaussians(fit_x, *popt), 'r-', label='Fit')
             param_text = (f'$\\mu_1$: {popt[4]:.1f} ± {perr[4]:.1f}\n'
                           f'$\\sigma_1$: {popt[5]:.1f} ± {perr[5]:.1f}')
-            ax.text(0.95, 0.95, param_text, transform=ax.transAxes, fontsize=9,
+            ax.text(0.95, 0.95, param_text, transform=ax.transAxes, fontsize=11,
                     verticalalignment='top', horizontalalignment='right',
                     bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
             fit_results_data[i] = {'counts': counts, 'edges': edges, 'popt': popt, 'perr': perr}
         except (RuntimeError, ValueError):
-            ax.text(0.5, 0.5, 'Fit Failed', transform=ax.transAxes, color='red', ha='center', va='center')
+            ax.text(0.5, 0.5, 'Fit Failed', transform=ax.transAxes, color='red', ha='center', va='center', fontsize=13)
             fit_results_data[i] = {'counts': counts, 'edges': edges, 'popt': None, 'perr': None}
 
-        ax.set_title(f'Channel {i}')
-        ax.set_xlabel('Sum Area (ADC)')
-        ax.set_ylabel('Events')
+        ax.set_title(f'Channel {i}', fontsize=16)
+        ax.set_xlabel('Sum Area (ADC)', fontsize=14)
+        ax.set_ylabel('Events', fontsize=14)
+        ax.tick_params(axis='both', labelsize=12)
         ax.grid(True, which='both', linestyle=':')
-        ax.legend(loc='lower left', fontsize='small')
+        ax.legend(loc='center right', fontsize=12)
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
     ensure_dir(output_dir)
@@ -490,7 +491,8 @@ def process_run(run, data_dir, output_dir, delta_t_cut, pe_cut, bins, veto_bins,
         mu1_values_run = np.full(12, np.nan)
 
     area_data_np = np.array(df_all['area_array'].to_list())[:, :12]
-    times_data_np = np.array(df_all['peakPosition'].to_list())[:, :12]
+    # Convert peakPosition ticks to ns so time_std matches TIME_STD_CUT units.
+    times_data_np = np.asarray(df_all['peakPosition'].to_list(), dtype=float)[:, :12] * config.TIME_TICK_NS
     mu1_safe = np.where(np.isnan(mu1_values_run) | (mu1_values_run <= 0), np.inf, mu1_values_run)
     pe_per_channel = area_data_np / mu1_safe
     postmcut_mask = pe_per_channel > multiplicity_spe

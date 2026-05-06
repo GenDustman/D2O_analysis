@@ -74,9 +74,9 @@ except ImportError:
             'dpi': 300,
             'suptitle_fontsize': 20,
             'channel_title_fontsize': 15,
-            'axis_label_fontsize': 13,
-            'tick_labelsize': 12,
-            'legend_fontsize': 11,
+            'axis_label_fontsize': 15,
+            'tick_labelsize': 14,
+            'legend_fontsize': 13,
             'annotation_fontsize': 11,
         }
         PERFORM_THIN_VETO_ANALYSIS = False
@@ -2422,7 +2422,8 @@ class RunProcessor:
     def _calculate_derived_quantities(self, df_all, mu1_values_run, multiplicity_spe):
         """Calculate derived quantities like multiplicity, time_std, and total_pe."""
         area_data_np = np.array(df_all['area_array'].to_list())[:, config.PMT_CHANNELS]
-        times_data_np = np.array(df_all['peakPosition'].to_list())[:, config.PMT_CHANNELS]
+        # Convert peakPosition ticks to ns so time_std matches TIME_STD_CUT units.
+        times_data_np = np.asarray(df_all['peakPosition'].to_list(), dtype=float)[:, config.PMT_CHANNELS] * config.TIME_TICK_NS
         
         mu1_safe = np.where(np.isnan(mu1_values_run) | (mu1_values_run <= 0), np.inf, mu1_values_run)
         pe_per_channel = area_data_np / mu1_safe
@@ -2615,10 +2616,10 @@ class RunProcessor:
         dpi = int(plot_cfg.get('dpi', 300))
         suptitle_fontsize = int(plot_cfg.get('suptitle_fontsize', 20))
         channel_title_fontsize = int(plot_cfg.get('channel_title_fontsize', 15))
-        axis_label_fontsize = int(plot_cfg.get('axis_label_fontsize', 13))
-        tick_labelsize = int(plot_cfg.get('tick_labelsize', 12))
-        legend_fontsize = int(plot_cfg.get('legend_fontsize', 11))
-        annotation_fontsize = int(plot_cfg.get('annotation_fontsize', 11))
+        axis_label_fontsize = int(plot_cfg.get('axis_label_fontsize', 15))
+        tick_labelsize = int(plot_cfg.get('tick_labelsize', 14))
+        legend_fontsize = int(plot_cfg.get('legend_fontsize', 13))
+        annotation_fontsize = int(plot_cfg.get('annotation_fontsize', 13))
 
         def constrained_gaussians(x, a0, mu0, sig0, a1, mu1, sig1, a2, a3):
             sig2_sq = 2 * sig1**2 - sig0**2
@@ -2673,7 +2674,7 @@ class RunProcessor:
             ax.grid(True, which='major', linestyle='-', linewidth=0.7, alpha=0.45)
             ax.grid(True, which='minor', linestyle=':', linewidth=0.5, alpha=0.35)
             ax.minorticks_on()
-            ax.legend(loc='lower left', fontsize=legend_fontsize)
+            ax.legend(loc='center right', bbox_to_anchor=(0.98, 0.5), fontsize=legend_fontsize)
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.96])
         self.file_handler.ensure_dir(output_dir)

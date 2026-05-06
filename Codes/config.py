@@ -78,17 +78,17 @@ LOW_LIGHT_PLOT_CONFIG = {
     'dpi': 300,
     'suptitle_fontsize': 20,
     'channel_title_fontsize': 15,
-    'axis_label_fontsize': 13,
-    'tick_labelsize': 12,
-    'legend_fontsize': 11,
-    'annotation_fontsize': 11,
+    'axis_label_fontsize': 15,
+    'tick_labelsize': 14,
+    'legend_fontsize': 13,
+    'annotation_fontsize': 13,
 }
 
 SIPM_PULSEH_FIT_CONFIG = {
     'enabled': True,
     'bins': 200,
     'hist_range': (0, 800),
-    'threshold': 25.0,
+    'threshold': 30.0,
     'fit_ranges_by_panel': {
         'top': (120, 800),
         'wide': (160, 800),
