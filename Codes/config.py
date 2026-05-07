@@ -69,6 +69,10 @@ RUN_PLOT_CONFIG = {
         'hist_bins': 100,
         'hist_range': (-50, 2000),
     },
+    'sipm_noise_ratio_hist': {
+        'hist_bins': 100,
+        'hist_range': (0, 5),
+    },
 }
 
 LOW_LIGHT_FIT_RANGE = (-50, 400)  # (min_adc, max_adc) for multi-Gaussian SPE fits
@@ -99,6 +103,13 @@ SIPM_PULSEH_FIT_CONFIG = {
         'wide': (160, 400),
         'thin': (90, 300),
     }
+}
+
+SIPM_NOISE_HIST_CONFIG = {
+    'enabled': True,
+    'threshold': 30.0,
+    'hist_bins': 100,
+    'hist_range': (0, 5),
 }
 
 HIGHLIGHT_FIT_CONFIG = {
@@ -249,6 +260,13 @@ MASTER_PLOT_CONFIG = {
     'sipm_area_hist': {
         'hist_bins': RUN_PLOT_CONFIG['sipm_area_hist']['hist_bins'],
         'hist_range': RUN_PLOT_CONFIG['sipm_area_hist']['hist_range'],
+        'logscale': True,
+        'figure_size': (20, 15),
+        'dpi': 300,
+    },
+    'sipm_noise_ratio_hist': {
+        'hist_bins': RUN_PLOT_CONFIG['sipm_noise_ratio_hist']['hist_bins'],
+        'hist_range': RUN_PLOT_CONFIG['sipm_noise_ratio_hist']['hist_range'],
         'logscale': True,
         'figure_size': (20, 15),
         'dpi': 300,

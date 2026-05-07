@@ -326,32 +326,36 @@ class BinnedDataPlotter:
         print(f"Veto efficiency plot saved to {img_path}")
         print(f"Veto efficiency data saved to {pkl_path}")
 
-    def plot_sipm_histograms_from_binned_data(self, hist_data, bin_edges, output_dir, label, M1_or_M2, hist_config):
+    def plot_sipm_histograms_from_binned_data(self, hist_data, bin_edges, output_dir, label, M1_or_M2, hist_config,
+                                              suptitle=None, xlabel=None, filename_suffix=None):
         """
         Plots SiPM histograms from pre-binned data (dict of counts).
         """
         self.file_handler.ensure_dir(output_dir)
         filename_label = label.replace(" ", "_").replace("-", "_").replace(":", "")
-        
+
         fig, axes = plt.subplots(3, 4, figsize=tuple(hist_config.get('figure_size', (20, 15))))
-        fig.suptitle(f'SiPM Channel Area (triggerBits>=32) - {label} ({M1_or_M2})', fontsize=16)
+        if suptitle is None:
+            suptitle = f'SiPM Channel Area (triggerBits>=32) - {label} ({M1_or_M2})'
+        fig.suptitle(suptitle, fontsize=16)
         axes = axes.flatten()
-        
+
         sipm_hist_data = {}
         sipm_channels = config.SIPM_CHANNELS
-        
+        xlabel = xlabel or 'Area (ADC)'
+
         for i, ch in enumerate(sipm_channels):
             ax = axes[i]
             if ch in hist_data and hist_data[ch] is not None:
                 counts = hist_data[ch]
                 total_events = np.sum(counts)
-                
-                ax.step(bin_edges, np.append(counts, counts[-1]), where='post', color='darkcyan', 
+
+                ax.step(bin_edges, np.append(counts, counts[-1]), where='post', color='darkcyan',
                        label=f"N = {total_events:.0f}")
-                
+
                 sipm_hist_data[ch] = {'counts': counts, 'edges': bin_edges}
                 ax.set_title(f'SiPM Channel {ch}')
-                ax.set_xlabel('Area (ADC)')
+                ax.set_xlabel(xlabel)
                 ax.set_ylabel('Events')
                 ax.grid(True, which='both', linestyle=':')
                 if hist_config.get('logscale', True):
@@ -362,16 +366,18 @@ class BinnedDataPlotter:
             else:
                 ax.text(0.5, 0.5, f'Channel {ch}\nNo Data', ha='center', va='center', transform=ax.transAxes)
                 ax.set_axis_off()
-        
+
         for i in range(len(sipm_channels), len(axes)):
             axes[i].set_axis_off()
 
         plt.tight_layout(rect=[0, 0, 1, 0.96])
-        
-        base_filename = f'{filename_label}_{M1_or_M2}_sipm_area_histograms'
+
+        if filename_suffix is None:
+            filename_suffix = 'sipm_area_histograms'
+        base_filename = f'{filename_label}_{M1_or_M2}_{filename_suffix}'
         img_save_path = output_dir / f'{base_filename}.png'
         pkl_save_path = output_dir / f'{base_filename}.pkl'
-        
+
         plt.savefig(img_save_path, dpi=hist_config.get('dpi', 300))
         self.file_handler.save_pickle(sipm_hist_data, pkl_save_path)
         print(f"SiPM histograms saved to {img_save_path}")
@@ -1157,11 +1163,22 @@ class MasterAggregator:
 
         # SiPM data
         self.sipm_channels = config.SIPM_CHANNELS
-        self.sipm_bin_edges = np.linspace(*sipm_master_cfg['hist_range'], 
+        self.sipm_bin_edges = np.linspace(*sipm_master_cfg['hist_range'],
                                          int(sipm_master_cfg['hist_bins']) + 1)
-        self.master_sipm_hist_counts = {ch: np.zeros(int(sipm_master_cfg['hist_bins'])) 
+        self.master_sipm_hist_counts = {ch: np.zeros(int(sipm_master_cfg['hist_bins']))
                                        for ch in self.sipm_channels}
         self.sipm_data_found = False
+
+        # SiPM noise ratio data
+        noise_ratio_cfg = get_master_plot_config('sipm_noise_ratio_hist', {
+            'hist_bins': config.SIPM_NOISE_HIST_CONFIG.get('hist_bins', 100),
+            'hist_range': config.SIPM_NOISE_HIST_CONFIG.get('hist_range', (0, 5)),
+        })
+        self.noise_ratio_bin_edges = np.linspace(*noise_ratio_cfg['hist_range'],
+                                                  int(noise_ratio_cfg['hist_bins']) + 1)
+        self.master_noise_ratio_counts = {ch: np.zeros(int(noise_ratio_cfg['hist_bins']))
+                                           for ch in self.sipm_channels}
+        self.noise_ratio_data_found = False
 
         # Veto data
         self.pe_comp_bin_edges = self.data_aggregator.hist_calc.bin_edges_from_spec(
@@ -1246,6 +1263,7 @@ class MasterAggregator:
             self._load_main_arrays(sub_dir)
             self._load_event61_data(sub_dir)
             self._load_sipm_data(sub_dir)
+            self._load_sipm_noise_ratio_data(sub_dir)
             self._load_veto_data(sub_dir)
             self._load_run_level_veto_data(sub_dir)
             self._load_low_light_data(sub_dir)
@@ -1353,6 +1371,24 @@ class MasterAggregator:
                             self.master_sipm_hist_counts[ch] += job_counts
                 except Exception as e:
                     print(f"  Warning: Could not process SiPM data for {sub_dir.name}. Error: {e}")
+
+    def _load_sipm_noise_ratio_data(self, sub_dir):
+        """Load SiPM noise ratio (area/pulseH) histogram payloads."""
+        noise_file = sub_dir / 'aggregated_sipm_noise_ratio_hists.pkl'
+        if not noise_file.exists():
+            return
+        self.noise_ratio_data_found = True
+        try:
+            with open(noise_file, 'rb') as f:
+                noise_payload = pickle.load(f)
+            noise_edges = np.asarray(noise_payload.get('edges', []), dtype=float)
+            if noise_edges.shape != self.noise_ratio_bin_edges.shape or not np.allclose(noise_edges, self.noise_ratio_bin_edges):
+                print(f"  Warning: SiPM noise ratio histogram edge mismatch in {sub_dir.name}; skipping.")
+                return
+            for ch, counts in noise_payload.get('counts', {}).items():
+                self.master_noise_ratio_counts[int(ch)] += np.asarray(counts, dtype=float)
+        except Exception as e:
+            print(f"  Warning: Could not process SiPM noise ratio data for {sub_dir.name}. Error: {e}")
 
     def _load_veto_data(self, sub_dir):
         """Load veto histogram payloads, falling back to old raw PE series if needed."""
@@ -1882,6 +1918,7 @@ class MasterAggregator:
         self._generate_highlight_plots()
         self._generate_highlight_evolution_plot()
         self._generate_sipm_plots()
+        self._generate_sipm_noise_ratio_plots()
         self._generate_thin_veto_plots()
         self._generate_brn_plots()
 
@@ -2953,6 +2990,27 @@ class MasterAggregator:
             )
         else:
             print("No SiPM data found to plot.")
+
+    def _generate_sipm_noise_ratio_plots(self):
+        """Generate SiPM noise ratio (area/pulseH) histogram plots."""
+        if self.noise_ratio_data_found:
+            print("Plotting aggregated SiPM noise ratio data...")
+            noise_cfg = get_master_plot_config('sipm_noise_ratio_hist', dict(config.SIPM_NOISE_HIST_CONFIG))
+            threshold = config.SIPM_NOISE_HIST_CONFIG.get('threshold', 30.0)
+            suptitle = f'SiPM Channel Area/PulseHeight (triggerBits>=32, pulseH>{threshold:.0f}) - {self.agg_label} ({self.m1_or_m2})'
+            self.binned_plotter.plot_sipm_histograms_from_binned_data(
+                self.master_noise_ratio_counts,
+                self.noise_ratio_bin_edges,
+                self.master_output_dir,
+                self.agg_label,
+                self.m1_or_m2,
+                noise_cfg,
+                suptitle=suptitle,
+                xlabel='Area / Pulse Height',
+                filename_suffix='sipm_noise_ratio_histograms',
+            )
+        else:
+            print("No SiPM noise ratio data found to plot.")
 
     def _generate_thin_veto_plots(self):
         """Generate thin veto comparison plots."""

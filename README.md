@@ -15,8 +15,9 @@ D2O_analysis/
 │   ├── Globus_transfer.py                # Globus data transfer
 │   ├── *.ipynb             # Jupyter notebooks (exploratory)
 │   └── Read_Cut_Hist_*.py  # Older processing variants (legacy)
-├── Scripts/                # SLURM job submission
-│   ├── submit_veto.sh      # Submit analysis jobs (active)
+├── Scripts/                # Job submission and local execution
+│   ├── submit_veto.sh      # Submit analysis jobs via SLURM (active)
+│   ├── run_local.sh        # Run analysis locally without SLURM
 │   ├── submit_veto_legacy.sh
 │   ├── submit_aggregation_only.sh
 │   ├── run_legacy_analysis.sh
@@ -38,6 +39,7 @@ The repo contains multiple generations of scripts as the analysis evolved. Below
 | `Codes/aggregate_master_veto.py` | Master aggregation: collects sub-job outputs, produces grand-aggregated plots and fits |
 | `Codes/Globus_transfer.py` | Transfer ROOT files from ORNL to CMU via Globus |
 | `Scripts/submit_veto.sh` | SLURM submission wrapper for the full pipeline |
+| `Scripts/run_local.sh` | Local execution (no SLURM) — edit params and run directly |
 | `Scripts/submit_aggregation_only.sh` | Re-run only the aggregation step on existing results |
 
 ### Legacy (superseded — kept for reference and older ROOT formats)
@@ -83,7 +85,7 @@ Data lands in `M1_data/` (Module 1) or `M2_data/` (Module 2), organized by run n
 3. Applies quality cuts: time-std, PE range, PMT multiplicity, delta-t window
 4. Identifies muon events (triggerBit ≥ 34) and veto events (triggerBit = 2)
 5. Computes Δt between veto candidates and preceding muons
-6. Fills histograms: Δt, total PE, SiPM pulse-height, thin-veto, BRN, Event61
+6. Fills histograms: Δt, total PE, SiPM pulse-height, SiPM area/height noise ratio, thin-veto, BRN, Event61
 7. Performs low-light (triggerBit = 16) multi-Gaussian SPE fitting
 8. Saves per-subjob `.npy` and `.pkl` outputs
 
@@ -106,6 +108,7 @@ When all sub-jobs complete, a dependent job runs `aggregate_master_veto.py`, whi
   - **Event61** ADC spectrum and signal evolution
   - **Highlight PE** analysis with summed spectrum fitting
   - **SiPM pulse-height** Landau fits per channel
+  - **SiPM noise ratio** — area/pulseHeight vs channel, for separating electronic noise from real pulses
   - **Thin-veto** panel comparisons
 
 ## Quick Start
@@ -126,12 +129,17 @@ When all sub-jobs complete, a dependent job runs `aggregate_master_veto.py`, whi
    - Cuts: `PE_CUT`, `DELTA_T_CUT`, `MULTIPLICITY_CUT`, etc.
    - Toggles: `PERFORM_THIN_VETO_ANALYSIS`, `PERFORM_BRN_ANALYSIS`
 
-2. **Submit** — Adjust run range and number of jobs in `Scripts/submit_veto.sh`, then:
+2. **Submit (cluster)** — Adjust run range and number of jobs in `Scripts/submit_veto.sh`, then:
    ```bash
    sbatch Scripts/submit_veto.sh
    ```
 
-3. **Re-aggregate only** (if aggregation fails or config changes):
+3. **Run locally (no SLURM)** — Edit the parameters at the top of `Scripts/run_local.sh`, then:
+   ```bash
+   bash Scripts/run_local.sh
+   ```
+
+4. **Re-aggregate only** (if aggregation fails or config changes):
    ```bash
    sbatch Scripts/submit_aggregation_only.sh
    ```
@@ -162,6 +170,7 @@ DAQ time granularity is 16 ns. Muon lifetime for fitting is 2197 ns.
 - **Single photoelectron (SPE) calibration** — Multi-Gaussian fits to low-light (triggerBit 16) events
 - **Beam-related neutrons (BRN)** — Timing and energy spectra in a dedicated Δt window (832–4992 ns)
 - **Thin-veto performance** — Muon-veto coincidence vs all-event comparisons
+- **SiPM noise ratio** — Area/PulseHeight for triggerBits ≥ 32 muon events, per SiPM channel. The pulse-shape ratio helps discriminate real SiPM pulses from electronic noise spikes that could falsely cross the DAQ threshold (30 ADC)
 - **Highlight PE analysis** — PMT charge response to high-energy deposition events
 
 ## Notebooks

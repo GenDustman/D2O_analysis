@@ -1583,6 +1583,7 @@ class RunProcessor:
         # Extract SiPM events (triggerBits >= 32)
         sipm_events_df = df_all[df_all['triggerBits'] >= 32]
         sipm_hist_payload = self._build_sipm_area_hist_payload(sipm_events_df)
+        noise_ratio_payload = self._build_sipm_noise_ratio_hist_payload(sipm_events_df)
 
         sipm_pulseh_fit_config = self._get_default_sipm_pulseh_fit_config()
         sipm_fit_results = {}
@@ -1659,7 +1660,7 @@ class RunProcessor:
                 ll_hist_counts, ll_bin_edges,
                 hl_hist_counts, hl_bin_edges, hl_sum_payload,
                 event61_hist_payload,
-                sipm_hist_payload, veto_hist_payload,
+                sipm_hist_payload, noise_ratio_payload, veto_hist_payload,
                 tv_hist_counts, tv_bin_edges,
                 brn_hist_payload,
                 sipm_fit_results,
@@ -1670,7 +1671,7 @@ class RunProcessor:
             ll_hist_counts, ll_bin_edges,
             hl_hist_counts, hl_bin_edges, hl_sum_payload,
             event61_hist_payload,
-            sipm_hist_payload, veto_hist_payload,
+            sipm_hist_payload, noise_ratio_payload, veto_hist_payload,
             tv_hist_counts, tv_bin_edges,
             brn_hist_payload,
             sipm_fit_results,
@@ -1729,6 +1730,47 @@ class RunProcessor:
         for ch in config.SIPM_CHANNELS:
             if ch < area_data.shape[1]:
                 counts[ch], _ = np.histogram(area_data[:, ch], bins=edges)
+
+        return {'edges': edges, 'counts': counts}
+
+    def _build_sipm_noise_ratio_hist_payload(self, sipm_events_df):
+        """Build subjob-level SiPM noise ratio (area/pulseH) histograms per channel.
+
+        For each event with triggerBits >= 32, for each SiPM channel where
+        pulseH > threshold, compute area / pulseH and fill a histogram.
+        """
+        noise_cfg = getattr(config, 'SIPM_NOISE_HIST_CONFIG', {}) or {}
+        if not noise_cfg.get('enabled', True):
+            return None
+        hist_bins = int(noise_cfg.get('hist_bins', 100))
+        hist_range = tuple(noise_cfg.get('hist_range', (0, 5)))
+        threshold = float(noise_cfg.get('threshold', 30.0))
+        edges = np.linspace(*hist_range, hist_bins + 1)
+        counts = {ch: np.zeros(hist_bins, dtype=float) for ch in config.SIPM_CHANNELS}
+
+        if sipm_events_df.empty:
+            return {'edges': edges, 'counts': counts}
+        if 'area_array' not in sipm_events_df.columns or 'pulseH_array' not in sipm_events_df.columns:
+            return {'edges': edges, 'counts': counts}
+
+        area_data = np.array(sipm_events_df['area_array'].to_list())
+        pulseh_data = np.array(sipm_events_df['pulseH_array'].to_list())
+        if area_data.ndim != 2 or pulseh_data.ndim != 2:
+            return {'edges': edges, 'counts': counts}
+
+        for ch in config.SIPM_CHANNELS:
+            if ch >= area_data.shape[1] or ch >= pulseh_data.shape[1]:
+                continue
+            ch_pulseh = pulseh_data[:, ch]
+            ch_area = area_data[:, ch]
+            mask = ch_pulseh > threshold
+            if not np.any(mask):
+                continue
+            ratios = ch_area[mask] / ch_pulseh[mask]
+            ratios = ratios[np.isfinite(ratios)]
+            if len(ratios) == 0:
+                continue
+            counts[ch], _ = np.histogram(ratios, bins=edges)
 
         return {'edges': edges, 'counts': counts}
 
@@ -2866,6 +2908,8 @@ def main():
         'event61_edges': None,
         'sipm_area_hists': None,
         'sipm_area_edges': None,
+        'sipm_noise_ratio_hists': None,
+        'sipm_noise_ratio_edges': None,
         'veto_histograms': None,
         'low_light_hists': [],
         'highlight_hists': [],
@@ -2909,7 +2953,7 @@ def main():
                      ll_hists, ll_edges,
                      hl_hists, hl_edges, hl_sum_payload,
                      event61_hist_payload,
-                     sipm_hist_payload, veto_hist_payload,
+                     sipm_hist_payload, noise_ratio_payload, veto_hist_payload,
                      tv_hists, tv_edges,
                      brn_hist_payload,
                      sipm_fit_data,
@@ -2965,6 +3009,19 @@ def main():
                             raise ValueError("SiPM histogram edge mismatch across runs")
                         for ch, counts in sipm_hist_payload['counts'].items():
                             aggregated['sipm_area_hists'][ch] += np.asarray(counts, dtype=float)
+
+                if noise_ratio_payload is not None:
+                    if aggregated['sipm_noise_ratio_hists'] is None:
+                        aggregated['sipm_noise_ratio_hists'] = {
+                            ch: np.asarray(counts, dtype=float).copy()
+                            for ch, counts in noise_ratio_payload['counts'].items()
+                        }
+                        aggregated['sipm_noise_ratio_edges'] = np.asarray(noise_ratio_payload['edges'], dtype=float).copy()
+                    else:
+                        if aggregated['sipm_noise_ratio_edges'].shape != np.asarray(noise_ratio_payload['edges']).shape or not np.allclose(aggregated['sipm_noise_ratio_edges'], np.asarray(noise_ratio_payload['edges'], dtype=float)):
+                            raise ValueError("SiPM noise ratio histogram edge mismatch across runs")
+                        for ch, counts in noise_ratio_payload['counts'].items():
+                            aggregated['sipm_noise_ratio_hists'][ch] += np.asarray(counts, dtype=float)
 
                 if veto_hist_payload is not None:
                     if aggregated['veto_histograms'] is None:
@@ -3065,6 +3122,13 @@ def main():
             FileHandler.save_pickle(
                 {'counts': aggregated['sipm_area_hists'], 'edges': aggregated['sipm_area_edges']},
                 output_dir / 'aggregated_sipm_area_hists.pkl'
+            )
+
+        # Save SiPM noise ratio histogram data
+        if aggregated['sipm_noise_ratio_hists'] is not None and aggregated['sipm_noise_ratio_edges'] is not None:
+            FileHandler.save_pickle(
+                {'counts': aggregated['sipm_noise_ratio_hists'], 'edges': aggregated['sipm_noise_ratio_edges']},
+                output_dir / 'aggregated_sipm_noise_ratio_hists.pkl'
             )
 
         # Save veto histogram data
