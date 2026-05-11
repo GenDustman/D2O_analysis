@@ -188,4 +188,5 @@ Jupyter notebooks in `Codes/` are for exploratory and diagnostic work — they a
 | `D2O_legacy_test.ipynb` | Legacy data testing |
 | `Globus_transfer.ipynb` | Interactive Globus transfers |
 | `tools_runnum_run_time_convt.ipynb` | Run number ↔ timestamp conversion |
+| `waveform_display.ipynb` | Interactive waveform viewer — plot adcVal traces for all 23 channels filtered by run number and trigger bit |
 | `test.ipynb` | Scratch/testing |
